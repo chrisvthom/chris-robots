@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +99,11 @@ class RobotDef:
   foot_friction: float = 0.8
   body_ang_vel_weight: float = -0.05
   angular_momentum_weight: float = -0.02
+  hip_adduction_min: float = 0.0
+  """Sim-only: widen the adduction side (the smaller side) of every hip-roll joint range
+  to at least this many radians. Several of these robots only allow 0.1-0.2 rad of
+  adduction, which makes it impossible to shift the pelvis over the stance foot, and the
+  policy learns a shuffle instead of a walk."""
 
   # ---- derived from robot.json ---------------------------------------------
   def __post_init__(self) -> None:
@@ -117,7 +123,21 @@ class RobotDef:
     return "Chris-Velocity-Flat-" + "".join(p.capitalize() for p in self.name.split("_"))
 
   def get_spec(self) -> mujoco.MjSpec:
-    return mujoco.MjSpec.from_file(str(self.xml))
+    spec = mujoco.MjSpec.from_file(str(self.xml))
+    self.apply_joint_overrides(spec)
+    return spec
+
+  def apply_joint_overrides(self, spec: mujoco.MjSpec) -> None:
+    """Apply sim-only joint range tweaks to a spec containing this robot."""
+    if self.hip_adduction_min > 0:
+      for j in spec.joints:
+        if re.fullmatch(r".*hip_roll.*", j.name):
+          lo, hi = (float(x) for x in j.range)
+          if abs(lo) < abs(hi):
+            lo = min(lo, -self.hip_adduction_min)
+          else:
+            hi = max(hi, self.hip_adduction_min)
+          j.range = [lo, hi]
 
   def init_state(self) -> EntityCfg.InitialStateCfg:
     pose = self.info["init_pose"]

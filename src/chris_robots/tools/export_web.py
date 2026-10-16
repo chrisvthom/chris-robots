@@ -101,6 +101,7 @@ def read_onnx_metadata(onnx_path: Path) -> dict:
 def build_scene_spec(robot: RobotDef, meta: dict) -> mujoco.MjSpec:
   """robots/<name>/scene.xml + feet-only collisions + position actuators + keyframe."""
   spec = mujoco.MjSpec.from_file(str(robot.dir / "scene.xml"))
+  robot.apply_joint_overrides(spec)
 
   # Same collision structure mjlab applied during training. mjlab applies this to the
   # robot-only spec; here the floor is in the same spec, so restore it afterwards.

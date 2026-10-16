@@ -56,4 +56,5 @@ GPR = RobotDef(
   foot_clearance=0.08,
   push_vel=0.5,
   com_offset=0.025,
+  hip_adduction_min=0.5,
 )

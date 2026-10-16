@@ -43,4 +43,5 @@ OPUS = RobotDef(
   foot_clearance=0.03,
   push_vel=0.2,
   com_offset=0.01,
+  hip_adduction_min=0.5,
 )
