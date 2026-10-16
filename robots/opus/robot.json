@@ -257,6 +257,10 @@
     ],
     "warnings": []
   },
+  "foot_order": [
+    "right",
+    "left"
+  ],
   "feet": {
     "right": {
       "body": "foot_right",

@@ -94,8 +94,6 @@ class RobotDef:
   extra_init_joint_pos: dict[str, float] = field(default_factory=dict)
   """Additional init joint positions (regex -> value), e.g. arm pose."""
   base_body: str = "base"
-  foot_sites: tuple[str, str] = ("left_foot", "right_foot")
-  foot_geoms: tuple[str, str] = ("left_foot_collision", "right_foot_collision")
   foot_friction: float = 0.8
   body_ang_vel_weight: float = -0.05
   angular_momentum_weight: float = -0.02
@@ -112,9 +110,22 @@ class RobotDef:
     assert self.xml.exists(), self.xml
     self.info: dict = json.loads((self.dir / "robot.json").read_text())
     self.joint_names: tuple[str, ...] = tuple(self.info["joints"])
-    self.foot_bodies: tuple[str, ...] = tuple(
-      self.info["feet"][s]["body"] for s in ("left", "right")
-    )
+    # Feet in *model* order. mjlab resolves name patterns in model order (contact
+    # sensor primaries, SceneEntityCfg site ids), so the height-scan frames and
+    # everything else per-foot must use the same order or rewards pair the wrong feet.
+    if "foot_order" in self.info:
+      self.foot_order: tuple[str, ...] = tuple(self.info["foot_order"])
+    else:  # older robot.json: derive it from the compiled model
+      model = mujoco.MjModel.from_xml_path(str(self.xml))
+      self.foot_order = tuple(
+        sorted(
+          ("left", "right"),
+          key=lambda s: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"{s}_foot"),
+        )
+      )
+    self.foot_sites: tuple[str, ...] = tuple(f"{s}_foot" for s in self.foot_order)
+    self.foot_geoms: tuple[str, ...] = tuple(f"{s}_foot_collision" for s in self.foot_order)
+    self.foot_bodies: tuple[str, ...] = tuple(self.info["feet"][s]["body"] for s in self.foot_order)
     self.standing_height: float = float(self.info["standing_base_height_m"])
     self.display_name: str = self.info["display_name"]
 

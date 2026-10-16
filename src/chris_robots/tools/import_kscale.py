@@ -496,6 +496,11 @@ def import_robot(src_cfg: Source, out_root: Path) -> dict:
   data = mujoco.MjData(model)
   mujoco.mj_forward(model, data)
   joint_names = [model.joint(i).name for i in range(model.njnt) if model.jnt_type[i] == 3]
+  # Model order of the feet. mjlab resolves regex patterns (contact sensors, site
+  # lists) in model order, so every per-foot tensor must use this order.
+  foot_order = sorted(
+    foot_info, key=lambda side: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"{side}_foot")
+  )
   base_z = float(model.body("base").pos[2])
   sole_z = min(v["sole_height_at_init"] for v in foot_info.values())
   init_pose = compute_init_pose(model)
@@ -575,6 +580,7 @@ def import_robot(src_cfg: Source, out_root: Path) -> dict:
     "joints": joint_names,
     "joint_info": joint_info,
     "init_pose": init_pose,
+    "foot_order": foot_order,
     "feet": foot_info,
     "joint_metadata": {
       j: {
