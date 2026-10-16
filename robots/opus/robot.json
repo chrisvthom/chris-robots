@@ -1,0 +1,282 @@
+{
+  "name": "opus",
+  "display_name": "Opus",
+  "notes": "3D-printed plastic mini humanoid (K-Scale 'opus'), hobby servos. 16 DoF, ~2.8 kg, 0.32 m.",
+  "source": "/home/christhomas/Developer/chris-robots/.cache/staging/opus",
+  "source_root_body": "Torso",
+  "dof": 16,
+  "mass_kg": 2.826,
+  "base_height_at_init_m": 0.32,
+  "sole_height_at_init_m": 0.0018509941183179213,
+  "standing_base_height_m": 0.3181,
+  "joints": [
+    "right_shoulder_pitch",
+    "right_shoulder_yaw",
+    "right_elbow_yaw",
+    "left_shoulder_pitch",
+    "left_shoulder_yaw",
+    "left_elbow_yaw",
+    "right_hip_pitch",
+    "right_hip_roll",
+    "right_hip_yaw",
+    "right_knee_pitch",
+    "right_ankle_pitch",
+    "left_hip_pitch",
+    "left_hip_roll",
+    "left_hip_yaw",
+    "left_knee_pitch",
+    "left_ankle_pitch"
+  ],
+  "joint_info": {
+    "right_shoulder_pitch": {
+      "range": [
+        -1.7453,
+        1.7453
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    "right_shoulder_yaw": {
+      "range": [
+        -1.1345,
+        0.8727
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        1.0,
+        -0.0,
+        0.0
+      ]
+    },
+    "right_elbow_yaw": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "left_shoulder_pitch": {
+      "range": [
+        -1.7453,
+        1.7453
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    "left_shoulder_yaw": {
+      "range": [
+        -0.4363,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        1.0,
+        -0.0,
+        -0.0
+      ]
+    },
+    "left_elbow_yaw": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "right_hip_pitch": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        0.0,
+        1.0,
+        -0.0
+      ]
+    },
+    "right_hip_roll": {
+      "range": [
+        -0.0873,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "right_hip_yaw": {
+      "range": [
+        -0.7854,
+        0.7854
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        0.0,
+        -0.0,
+        1.0
+      ]
+    },
+    "right_knee_pitch": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        0.0,
+        1.0,
+        -0.0
+      ]
+    },
+    "right_ankle_pitch": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    "left_hip_pitch": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    "left_hip_roll": {
+      "range": [
+        -1.5708,
+        0.0873
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "left_hip_yaw": {
+      "range": [
+        -0.7854,
+        0.7854
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        0.0,
+        -0.0,
+        1.0
+      ]
+    },
+    "left_knee_pitch": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        -0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    "left_ankle_pitch": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.0,
+      "frictionloss": 0.0,
+      "world_axis_at_init": [
+        0.0,
+        1.0,
+        -0.0
+      ]
+    }
+  },
+  "init_pose": {
+    "joint_pos": {
+      "right_hip_pitch": -0.25,
+      "right_knee_pitch": 0.5,
+      "right_ankle_pitch": 0.25,
+      "left_hip_pitch": 0.25,
+      "left_knee_pitch": -0.5,
+      "left_ankle_pitch": -0.25
+    },
+    "base_pos": [
+      0.0,
+      0.0,
+      0.3119
+    ],
+    "foot_tilt_deg": [
+      0.0,
+      0.0
+    ],
+    "warnings": []
+  },
+  "feet": {
+    "right": {
+      "body": "foot_right",
+      "sole_height_at_init": 0.0018509975232096024,
+      "box_half_size": [
+        0.05,
+        0.026025,
+        0.01
+      ]
+    },
+    "left": {
+      "body": "foot_left",
+      "sole_height_at_init": 0.0018509941183179213,
+      "box_half_size": [
+        0.05,
+        0.026025,
+        0.01
+      ]
+    }
+  },
+  "joint_metadata": {},
+  "nmesh": 17
+}

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Training artifacts
+logs/
+wandb/
+outputs/
+*.pt
+
+# Scratch
+.cache/
+.DS_Store
+._*
+/tmp/

@@ -1,0 +1,57 @@
+[project]
+name = "chris-robots"
+version = "0.1.0"
+description = "Chris Thomas' robots: MuJoCo models and mjlab walking policies for every robot I've built."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Chris Thomas" }]
+license = "MIT"
+dependencies = [
+  "mjlab>=1.6.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.18,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+  "ruff>=0.14.0",
+  "onnxruntime>=1.19.0",
+  "pillow>=10.0",
+]
+
+# mjlab auto-discovers tasks registered under this entry point.
+[project.entry-points."mjlab.tasks"]
+chris_robots = "chris_robots"
+
+[project.scripts]
+import-robots = "chris_robots.tools.import_kscale:main"
+render-robots = "chris_robots.tools.render:main"
+smoke-test = "chris_robots.tools.smoke_test:main"
+export-web = "chris_robots.tools.export_web:main"
+curves = "chris_robots.tools.curves:main"
+
+# Blackwell (RTX 50xx) needs CUDA 13 wheels for torch and warp. These mirror the
+# index setup mjlab itself uses for its `cu130` extra (uv sources are not transitive).
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com/"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+warp-lang = { index = "nvidia" }
+
+[tool.ruff]
+indent-width = 2
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]

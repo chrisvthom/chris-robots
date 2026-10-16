@@ -1,0 +1,421 @@
+{
+  "name": "gpr",
+  "display_name": "GPR / Stompy",
+  "notes": "General Purpose Robot (Stompy). Physics model is the K-Bot V1 skeleton, which is the same mechanism; GPR's head and shells are a visual-only overlay (TODO).",
+  "source": "/run/media/christhomas/Raven/Projects/K-Scale/URDFs & Assets/kscale-assets/kbot-v1-feet",
+  "source_root_body": "floating_base_link",
+  "dof": 20,
+  "mass_kg": 28.756,
+  "base_height_at_init_m": 1.08214252,
+  "sole_height_at_init_m": 0.012989952155416751,
+  "standing_base_height_m": 1.0692,
+  "joints": [
+    "left_shoulder_pitch_03",
+    "left_shoulder_roll_03",
+    "left_shoulder_yaw_02",
+    "left_elbow_02",
+    "left_wrist_02",
+    "right_shoulder_pitch_03",
+    "right_shoulder_roll_03",
+    "right_shoulder_yaw_02",
+    "right_elbow_02",
+    "right_wrist_02",
+    "left_hip_pitch_04",
+    "left_hip_roll_03",
+    "left_hip_yaw_03",
+    "left_knee_04",
+    "left_ankle_02",
+    "right_hip_pitch_04",
+    "right_hip_roll_03",
+    "right_hip_yaw_03",
+    "right_knee_04",
+    "right_ankle_02"
+  ],
+  "joint_info": {
+    "left_shoulder_pitch_03": {
+      "range": [
+        0.0,
+        3.1416
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -0.002,
+        -1.0,
+        -0.001
+      ]
+    },
+    "left_shoulder_roll_03": {
+      "range": [
+        -3.6303,
+        0.48
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -1.0,
+        0.002,
+        0.0
+      ]
+    },
+    "left_shoulder_yaw_02": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.0,
+        -0.001,
+        1.0
+      ]
+    },
+    "left_elbow_02": {
+      "range": [
+        -2.5307,
+        0.0
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        0.002,
+        1.0,
+        0.001
+      ]
+    },
+    "left_wrist_02": {
+      "range": [
+        -3.1416,
+        3.1416
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        0.0,
+        -0.001,
+        1.0
+      ]
+    },
+    "right_shoulder_pitch_03": {
+      "range": [
+        -3.1416,
+        0.0
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        0.002,
+        1.0,
+        0.001
+      ]
+    },
+    "right_shoulder_roll_03": {
+      "range": [
+        -0.48,
+        3.6303
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -1.0,
+        0.002,
+        -0.0
+      ]
+    },
+    "right_shoulder_yaw_02": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.0,
+        -0.001,
+        1.0
+      ]
+    },
+    "right_elbow_02": {
+      "range": [
+        0.0,
+        2.5307
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.002,
+        -1.0,
+        -0.001
+      ]
+    },
+    "right_wrist_02": {
+      "range": [
+        -3.1416,
+        3.1416
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.0,
+        -0.001,
+        1.0
+      ]
+    },
+    "left_hip_pitch_04": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.007,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.002,
+        -1.0,
+        -0.001
+      ]
+    },
+    "left_hip_roll_03": {
+      "range": [
+        -3.1852,
+        0.3491
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -1.0,
+        0.002,
+        -0.0
+      ]
+    },
+    "left_hip_yaw_03": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -0.0,
+        -0.001,
+        1.0
+      ]
+    },
+    "left_knee_04": {
+      "range": [
+        0.0,
+        2.0944
+      ],
+      "armature": 0.007,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        0.002,
+        1.0,
+        0.001
+      ]
+    },
+    "left_ankle_02": {
+      "range": [
+        -0.6981,
+        0.6981
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        0.002,
+        1.0,
+        0.001
+      ]
+    },
+    "right_hip_pitch_04": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.007,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        0.002,
+        1.0,
+        0.001
+      ]
+    },
+    "right_hip_roll_03": {
+      "range": [
+        -0.3491,
+        3.1852
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -1.0,
+        0.002,
+        -0.0
+      ]
+    },
+    "right_hip_yaw_03": {
+      "range": [
+        -1.5708,
+        1.5708
+      ],
+      "armature": 0.005,
+      "frictionloss": 0.3,
+      "world_axis_at_init": [
+        -0.0,
+        -0.001,
+        1.0
+      ]
+    },
+    "right_knee_04": {
+      "range": [
+        -2.0944,
+        0.0
+      ],
+      "armature": 0.007,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.002,
+        -1.0,
+        -0.001
+      ]
+    },
+    "right_ankle_02": {
+      "range": [
+        -0.6981,
+        0.6981
+      ],
+      "armature": 0.002,
+      "frictionloss": 0.1,
+      "world_axis_at_init": [
+        -0.002,
+        -1.0,
+        -0.001
+      ]
+    }
+  },
+  "init_pose": {
+    "joint_pos": {
+      "left_elbow_02": -0.6,
+      "right_elbow_02": 0.6,
+      "left_hip_pitch_04": 0.25,
+      "left_knee_04": 0.5,
+      "left_ankle_02": -0.25,
+      "right_hip_pitch_04": -0.25,
+      "right_knee_04": -0.5,
+      "right_ankle_02": 0.25
+    },
+    "base_pos": [
+      0.0,
+      0.0,
+      1.0525
+    ],
+    "foot_tilt_deg": [
+      0.05,
+      0.05
+    ],
+    "warnings": []
+  },
+  "feet": {
+    "left": {
+      "body": "foot1",
+      "sole_height_at_init": 0.013216711800332803,
+      "box_half_size": [
+        0.109928,
+        0.02712,
+        0.036
+      ]
+    },
+    "right": {
+      "body": "foot3",
+      "sole_height_at_init": 0.012989952155416751,
+      "box_half_size": [
+        0.10991,
+        0.02712,
+        0.036
+      ]
+    }
+  },
+  "joint_metadata": {
+    "left_shoulder_pitch_03": {
+      "kp": "20.0",
+      "kd": "0.56866"
+    },
+    "left_shoulder_roll_03": {
+      "kp": "50.0",
+      "kd": "8.0093"
+    },
+    "left_shoulder_yaw_02": {
+      "kp": "50.0",
+      "kd": "8.0321"
+    },
+    "left_elbow_02": {
+      "kp": "20.0",
+      "kd": "2.3667"
+    },
+    "left_wrist_02": {
+      "kp": "20.0",
+      "kd": "0.51228"
+    },
+    "right_shoulder_pitch_03": {
+      "kp": "20.0",
+      "kd": "0.56850"
+    },
+    "right_shoulder_roll_03": {
+      "kp": "50.0",
+      "kd": "8.0001"
+    },
+    "right_shoulder_yaw_02": {
+      "kp": "50.0",
+      "kd": "8.0231"
+    },
+    "right_elbow_02": {
+      "kp": "20.0",
+      "kd": "2.3667"
+    },
+    "right_wrist_02": {
+      "kp": "20.0",
+      "kd": "0.51228"
+    },
+    "left_hip_pitch_04": {
+      "kp": "100.0",
+      "kd": "15.851"
+    },
+    "left_hip_roll_03": {
+      "kp": "50.0",
+      "kd": "11.152"
+    },
+    "left_hip_yaw_03": {
+      "kp": "50.0",
+      "kd": "1.4643"
+    },
+    "left_knee_04": {
+      "kp": "100.0",
+      "kd": "6.1504"
+    },
+    "left_ankle_02": {
+      "kp": "20.0",
+      "kd": "0.60059"
+    },
+    "right_hip_pitch_04": {
+      "kp": "100.0",
+      "kd": "15.851"
+    },
+    "right_hip_roll_03": {
+      "kp": "50.0",
+      "kd": "11.152"
+    },
+    "right_hip_yaw_03": {
+      "kp": "50.0",
+      "kd": "1.4617"
+    },
+    "right_knee_04": {
+      "kp": "100.0",
+      "kd": "6.1504"
+    },
+    "right_ankle_02": {
+      "kp": "20.0",
+      "kd": "0.60059"
+    }
+  },
+  "nmesh": 24
+}
