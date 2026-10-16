@@ -56,11 +56,11 @@ KBOT = RobotDef(
       r".*wrist.*": 0.3,
     },
   ),
+  # Legs get a G1-like scale (~0.5 rad per unit action) so a full stride is cheap in
+  # action-rate terms; arms stay small so they don't flail.
   action_scale={
-    r".*_04$": 0.25,
-    r".*_03$": 0.25,
-    r".*_02$": 0.25,
-    r".*_00$": 0.5,
+    r".*(hip|knee|ankle).*": 0.5,
+    r".*(shoulder|elbow|wrist).*": 0.25,
   },
   max_lin_vel=1.0,
   max_ang_vel=1.0,

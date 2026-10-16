@@ -45,7 +45,7 @@ ZBOT_V3 = RobotDef(
       r".*gripper.*": 0.05,
     },
   ),
-  action_scale=0.25,
+  action_scale={r".*(hip|knee|ankle).*": 0.5, r".*(shoulder|elbow|wrist|gripper).*": 0.25},
   max_lin_vel=0.35,
   max_ang_vel=1.0,
   foot_clearance=0.03,

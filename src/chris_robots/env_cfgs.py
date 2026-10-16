@@ -12,6 +12,7 @@ import math
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
@@ -22,6 +23,7 @@ from mjlab.sensor import (
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
+from chris_robots import mdp as chris_mdp
 from chris_robots.robots.base import RobotDef
 
 STEPS_PER_ITER = 24  # rsl-rl num_steps_per_env
@@ -119,15 +121,33 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = (robot.base_body,)
   cfg.rewards["body_ang_vel"].weight = robot.body_ang_vel_weight
   cfg.rewards["angular_momentum"].weight = robot.angular_momentum_weight
-  cfg.rewards["air_time"].weight = 0.0
 
+  # Gait shaping. With mjlab's defaults our flat box soles learn a fast double-support
+  # shuffle (~1 cm foot lift, no lateral weight shift): the swing-height penalty is
+  # worth ~0.01/step against a 2.0/step velocity reward. Lean harder on clearance and
+  # add Isaac Lab's biped air-time reward, which pays for long single-stance phases.
+  # Durations scale with leg length (a 0.35 m robot's natural cadence is ~1.7x faster
+  # than a 1 m one).
+  swing_t = 0.4 * math.sqrt(robot.standing_height)
   for name in ("foot_clearance", "foot_slip"):
     cfg.rewards[name].params["asset_cfg"].site_names = robot.foot_sites
   cfg.rewards["foot_clearance"].params["target_height"] = robot.foot_clearance
+  cfg.rewards["foot_clearance"].weight = -4.0
   cfg.rewards["foot_swing_height"].params["target_height"] = robot.foot_clearance
+  cfg.rewards["foot_swing_height"].weight = -1.0
   for name in ("foot_clearance", "foot_swing_height", "foot_slip", "soft_landing"):
-    cfg.rewards[name].params["command_threshold"] = 0.05 * v
-  cfg.rewards["air_time"].params["command_threshold"] = 0.5 * v
+    cfg.rewards[name].params["command_threshold"] = 0.1 * v
+  cfg.rewards.pop("air_time")
+  cfg.rewards["air_time_biped"] = RewardTermCfg(
+    func=chris_mdp.feet_air_time_biped,
+    weight=1.0,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "threshold": swing_t,
+      "command_name": "twist",
+      "command_threshold": 0.1 * v,
+    },
+  )
 
   # ---- curriculum: widen the command range once the robot can walk ---------------
   cfg.curriculum["command_vel"].params["velocity_stages"] = [

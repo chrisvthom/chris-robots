@@ -309,25 +309,57 @@ class BundleRunner:
 
 
 def check_bundle(bundle_dir: Path, seconds: float, command: tuple[float, float, float]) -> bool:
+  """Roll the bundle out and print a short gait report."""
   runner = BundleRunner(bundle_dir)
+  m, d = runner.model, runner.data
   cmd = np.array(command, dtype=np.float32)
+  dt = runner.cfg["sim"]["control_dt"]
   start = runner.base_pos()
-  steps = int(seconds / runner.cfg["sim"]["control_dt"])
+  steps = int(seconds / dt)
   fell = False
   min_height = 0.4 * runner.cfg["sim"]["standing_base_height_m"]
+
+  foot_sites = [
+    mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s) for s in ("left_foot", "right_foot")
+  ]
+  names = runner.cfg["joints"]["names"]
+  roll_idx = [i for i, n in enumerate(names) if "hip_roll" in n]
+  foot_z = np.zeros((steps, 2))
+  hip_roll = np.zeros((steps, len(roll_idx)))
   for i in range(steps):
     runner.step(cmd)
+    foot_z[i] = [d.site_xpos[s][2] for s in foot_sites]
+    hip_roll[i] = d.qpos[runner.qpos_adr[roll_idx]] if roll_idx else 0.0
     if runner.upright() < 0.5 or runner.base_pos()[2] < min_height:
       fell = True
       print(
-        f"  FELL at t={i * runner.cfg['sim']['control_dt']:.2f}s (upright={runner.upright():.2f}, h={runner.base_pos()[2]:.2f})"
+        f"  FELL at t={i * dt:.2f}s (upright={runner.upright():.2f}, h={runner.base_pos()[2]:.2f})"
       )
+      foot_z, hip_roll = foot_z[: i + 1], hip_roll[: i + 1]
       break
+
   end = runner.base_pos()
   dist = end[:2] - start[:2]
+  # Swing phases: foot more than 5 mm above its resting height.
+  rest = foot_z[: max(1, int(0.2 / dt))].min(0)
+  peaks, n_swings = [], 0
+  for f in range(2):
+    up = foot_z[:, f] > rest[f] + 0.005
+    edges = np.flatnonzero(np.diff(up.astype(int)) == 1)
+    n_swings += len(edges)
+    for s in edges:
+      rest_of = ~up[s + 1 :]
+      e = s + 1 + int(np.argmax(rest_of)) if rest_of.any() else len(up)
+      peaks.append(foot_z[s:e, f].max() - rest[f])
+  cadence = n_swings / 2 / max(1e-6, len(foot_z) * dt)  # steps per second per foot
+  sway = float(np.ptp(hip_roll, axis=0).mean()) if roll_idx else float("nan")
   print(
     f"  check: cmd={command} -> moved dx={dist[0]:+.2f} dy={dist[1]:+.2f} m in {seconds:.0f}s"
     f" (avg {np.linalg.norm(dist) / seconds:.2f} m/s), final height {end[2]:.2f}, upright={runner.upright():.2f}"
+  )
+  print(
+    f"  gait:  {n_swings} swings, cadence {cadence:.2f} steps/s/foot, mean peak clearance "
+    f"{np.mean(peaks) if peaks else 0:.3f} m, hip roll range {sway:.2f} rad"
   )
   return not fell
 
