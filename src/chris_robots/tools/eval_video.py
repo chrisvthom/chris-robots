@@ -138,7 +138,7 @@ def render_eval(
   robot_geoms = np.flatnonzero(m.geom_bodyid != 0)
   top = float(np.max(d.geom_xpos[robot_geoms, 2] + m.geom_rbound[robot_geoms]))
   mid_z = 0.5 * top
-  cam.distance = (0.625 * top) / math.tan(math.radians(m.vis.global_.fovy / 2))
+  cam.distance = (0.7 * top) / math.tan(math.radians(m.vis.global_.fovy / 2))
   cam.azimuth, cam.elevation = 150, -10
   lookat = np.array([0.0, 0.0, mid_z])
   font = ImageFont.truetype(FONT, 22)

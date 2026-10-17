@@ -1,11 +1,29 @@
 """PPO configuration (mjlab's G1 velocity recipe, logging to TensorBoard)."""
 
+from dataclasses import dataclass, field
+
 from mjlab.rl import RslRlModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
 from chris_robots.robots.base import RobotDef
 
 
-def make_ppo_runner_cfg(robot: RobotDef) -> RslRlOnPolicyRunnerCfg:
+@dataclass
+class SymmetryCfg:
+  """rsl-rl ``Symmetry`` extension settings (see ``chris_robots.symmetry``)."""
+
+  data_augmentation_func: str = "chris_robots.symmetry:mirror"
+  use_data_augmentation: bool = True
+  use_mirror_loss: bool = True
+  mirror_loss_coeff: float = 0.5
+
+
+@dataclass
+class RslRlPpoSymmetryAlgorithmCfg(RslRlPpoAlgorithmCfg):
+  symmetry_cfg: SymmetryCfg = field(default_factory=SymmetryCfg)
+
+
+def make_ppo_runner_cfg(robot: RobotDef, symmetry: bool = False) -> RslRlOnPolicyRunnerCfg:
+  alg_cls = RslRlPpoSymmetryAlgorithmCfg if symmetry else RslRlPpoAlgorithmCfg
   return RslRlOnPolicyRunnerCfg(
     actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),
@@ -22,7 +40,7 @@ def make_ppo_runner_cfg(robot: RobotDef) -> RslRlOnPolicyRunnerCfg:
       activation="elu",
       obs_normalization=True,
     ),
-    algorithm=RslRlPpoAlgorithmCfg(
+    algorithm=alg_cls(
       value_loss_coef=1.0,
       use_clipped_value_loss=True,
       clip_param=0.2,

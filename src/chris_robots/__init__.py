@@ -30,16 +30,18 @@ def register_tasks() -> list[str]:
   registered = []
   existing = set(list_tasks())
   for robot in ALL_ROBOTS:
-    if robot.task_id in existing:
-      continue
-    register_mjlab_task(
-      task_id=robot.task_id,
-      env_cfg=make_flat_env_cfg(robot),
-      play_env_cfg=make_flat_env_cfg(robot, play=True),
-      rl_cfg=make_ppo_runner_cfg(robot),
-      runner_cls=VelocityOnPolicyRunner,
-    )
-    registered.append(robot.task_id)
+    # "<task>" is plain PPO; "<task>-Sym" adds left/right mirror augmentation + loss.
+    for task_id, symmetry in ((robot.task_id, False), (f"{robot.task_id}-Sym", True)):
+      if task_id in existing:
+        continue
+      register_mjlab_task(
+        task_id=task_id,
+        env_cfg=make_flat_env_cfg(robot),
+        play_env_cfg=make_flat_env_cfg(robot, play=True),
+        rl_cfg=make_ppo_runner_cfg(robot, symmetry=symmetry),
+        runner_cls=VelocityOnPolicyRunner,
+      )
+      registered.append(task_id)
   return registered
 
 

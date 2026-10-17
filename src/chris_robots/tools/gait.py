@@ -206,18 +206,20 @@ def _phases(contact_1d: np.ndarray, dt: float) -> list[tuple[bool, int, int]]:
 
 def _autocorr_period(x: np.ndarray, dt: float, tmin: float, tmax: float) -> float | None:
   x = x - x.mean()
-  if np.std(x) < 1e-4 or len(x) < int(tmax / dt) * 2:
+  if np.std(x) < 1e-4 or len(x) < int(tmax / dt) + int(tmin / dt):
     return None
+  # Unbiased autocorrelation (normalise by overlap length) so long lags aren't penalised.
   ac = np.correlate(x, x, mode="full")[len(x) - 1 :]
-  ac = ac / (ac[0] + 1e-9)
+  ac = ac / (np.arange(len(x), 0, -1) * (x.var() + 1e-9))
   lo, hi = int(tmin / dt), min(int(tmax / dt), len(ac) - 1)
   if hi <= lo:
     return None
   seg = ac[lo:hi]
-  k = lo + int(np.argmax(seg))
-  if seg.max() < 0.2:
-    return None
-  return k * dt
+  # First local maximum above threshold = fundamental period (argmax could pick 2T).
+  for i in range(1, len(seg) - 1):
+    if seg[i] >= seg[i - 1] and seg[i] >= seg[i + 1] and seg[i] > 0.3:
+      return (lo + i) * dt
+  return None
 
 
 def analyze(trace: GaitTrace, swing_target_m: float, speed_cmd: float) -> GaitMetrics:
@@ -274,7 +276,7 @@ def analyze(trace: GaitTrace, swing_target_m: float, speed_cmd: float) -> GaitMe
   else:
     alt = 0.0
 
-  period = _autocorr_period(trace.hip_pitch[:, 0], dt, 0.25, 2.0)
+  period = _autocorr_period(trace.hip_pitch[:, 0], dt, 0.25, 1.6)
   sym = None
   if period is not None:
     half = int(round(period / 2 / dt))
