@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import mujoco
+import numpy as np
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 from mjlab.utils.spec_config import CollisionCfg
@@ -97,6 +98,9 @@ class RobotDef:
   foot_friction: float = 0.8
   body_ang_vel_weight: float = -0.05
   angular_momentum_weight: float = -0.02
+  arm_swing_gain: float = 0.0
+  """Cosmetic: reward each shoulder pitch for following the opposite hip pitch with
+  this gain (0 disables the term)."""
   hip_adduction_min: float = 0.0
   """Sim-only: widen the adduction side (the smaller side) of every hip-roll joint range
   to at least this many radians. Several of these robots only allow 0.1-0.2 rad of
@@ -128,6 +132,53 @@ class RobotDef:
     self.foot_bodies: tuple[str, ...] = tuple(self.info["feet"][s]["body"] for s in self.foot_order)
     self.standing_height: float = float(self.info["standing_base_height_m"])
     self.display_name: str = self.info["display_name"]
+    if self.init_bend is not None:
+      # Re-derive the knees-bent init pose with a different bend (lazy import: the
+      # importer module imports this package).
+      from chris_robots.tools.import_kscale import compute_init_pose
+
+      model = mujoco.MjModel.from_xml_path(str(self.xml))
+      self.info["init_pose"] = compute_init_pose(model, bend=self.init_bend)
+
+  def init_qpos(self, model: mujoco.MjModel) -> list[float]:
+    """Full qpos (free joint + hinges in model order) of the init pose."""
+    pose = self.info["init_pose"]
+    joint_pos = dict(pose["joint_pos"])
+    for pattern, value in self.extra_init_joint_pos.items():
+      for name in self.joint_names:
+        if re.fullmatch(pattern, name):
+          joint_pos[name] = value
+    qpos = list(pose["base_pos"]) + [1.0, 0.0, 0.0, 0.0]
+    for i in range(model.njnt):
+      if model.jnt_type[i] == mujoco.mjtJoint.mjJNT_HINGE:
+        qpos.append(joint_pos.get(model.joint(i).name, 0.0))
+    return qpos
+
+  def arm_swing_pairs(self) -> tuple[tuple[str, str, float, float], ...]:
+    """(shoulder_pitch, opposite hip_pitch, shoulder sign, hip sign) per side.
+
+    Signs are sign(world joint axis . y) at the init pose, so that
+    ``-sign * (q - q_default)`` means "limb forward" for every pitch joint.
+    """
+    info = self.info["joint_info"]
+
+    def find(side: str, part: str) -> str | None:
+      for n in self.joint_names:
+        if side in n and part in n:
+          return n
+      return None
+
+    pairs = []
+    for arm_side, leg_side in (("left", "right"), ("right", "left")):
+      sh, hip = find(arm_side, "shoulder_pitch"), find(leg_side, "hip_pitch")
+      if sh is None or hip is None:
+        return ()
+      s_sh = info[sh]["world_axis_at_init"][1]
+      s_hip = info[hip]["world_axis_at_init"][1]
+      if abs(s_sh) < 0.7 or abs(s_hip) < 0.7:
+        return ()
+      pairs.append((sh, hip, float(np.sign(s_sh)), float(np.sign(s_hip))))
+    return tuple(pairs)
 
   @property
   def task_id(self) -> str:

@@ -126,8 +126,11 @@ def build_scene_spec(robot: RobotDef, meta: dict) -> mujoco.MjSpec:
     )
 
   # Keyframe: init pose + ctrl = default joint targets so the robot holds still at t=0.
+  # qpos comes from the RobotDef (which may override the importer's knee bend).
   key = spec.key("init_state")
   key.ctrl = np.array(meta["default_joint_pos"])
+  model = spec.compile()
+  key.qpos = np.array(robot.init_qpos(model))
   spec.compile()
   return spec
 

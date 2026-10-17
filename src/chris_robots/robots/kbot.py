@@ -37,7 +37,7 @@ KBOT = RobotDef(
       r".*hip_yaw.*": 0.15,
       r".*knee.*": 0.35,
       r".*ankle.*": 0.25,
-      r".*shoulder_pitch.*": 0.15,
+      r".*shoulder_pitch.*": 0.4,  # loose: arm swing is rewarded separately
       r".*shoulder_roll.*": 0.15,
       r".*shoulder_yaw.*": 0.1,
       r".*elbow.*": 0.15,
@@ -68,4 +68,9 @@ KBOT = RobotDef(
   push_vel=0.5,
   com_offset=0.025,
   hip_adduction_min=0.5,
+  # Looks: the importer's default pose (knee 29 deg) reads as a crouch once the policy
+  # adds its own flexion on top; start from straighter legs. Arms follow the opposite
+  # leg so the walk has a visible arm swing.
+  init_bend=0.15,
+  arm_swing_gain=0.8,
 )

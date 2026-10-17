@@ -149,6 +149,20 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
     },
   )
 
+  pairs = robot.arm_swing_pairs() if robot.arm_swing_gain > 0 else ()
+  if pairs:
+    cfg.rewards["arm_swing"] = RewardTermCfg(
+      func=chris_mdp.arm_swing,
+      weight=0.5,
+      params={
+        "pairs": pairs,
+        "gain": robot.arm_swing_gain,
+        "std": 0.25,
+        "command_name": "twist",
+        "command_threshold": 0.1 * v,
+      },
+    )
+
   # ---- curriculum: widen the command range once the robot can walk ---------------
   cfg.curriculum["command_vel"].params["velocity_stages"] = [
     {"step": 0, "lin_vel_x": (-v, v), "ang_vel_z": (-0.5 * w, 0.5 * w)},
