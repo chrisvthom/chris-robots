@@ -147,6 +147,15 @@ lengths by leg length and time by its square root, and writes the AMP features
 The discriminator (`amp.py`) lives inside a reward term and refits itself every rollout,
 so the standard mjlab `train`/`play`/`eval-video`/`export-web` tooling is unchanged;
 runs named `*_amp*` are evaluated with the AMP observation layout (no gait clock).
+There is also a `-SymAmp` variant that keeps the clock layer and adds the prior as a
+low-weight style nudge.
+
+Status: experimental. With a first pass of tuning (velocity-free features, 0.1 s
+transitions, gradient penalty 10) the pure `-Amp` K-Bot learns to stand, track
+commands and sprint with 1.2 m strides and bent "runner" elbows within 1000
+iterations, but its walk is a quick 0.3 m shuffle with no torso motion; the
+discriminator either wins outright on sim/mocap mismatch or is fooled by a shuffle
+plus arm flailing. The clock-based layer is what the published bundles use.
 
 ## Modelling notes
 
