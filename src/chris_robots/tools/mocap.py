@@ -64,7 +64,10 @@ _DISTAL = {
   "shoulder_yaw": "elbow",
   "elbow": "wrist",
 }
-_PITCH_ROLES = {"hip_pitch", "knee", "ankle_pitch", "shoulder_pitch", "elbow"}
+# Roles whose rest-pose offset is taken from limb-segment directions. Ankles are left
+# out on purpose: both robots stand flat-footed at q=0, and the ankle->foot-site segment
+# says more about where the site sits on the sole than about the joint angle.
+_PITCH_ROLES = {"hip_pitch", "knee", "shoulder_pitch", "elbow"}
 
 
 def _g1_xml() -> Path:
