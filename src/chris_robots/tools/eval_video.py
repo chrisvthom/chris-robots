@@ -72,10 +72,12 @@ def export_checkpoints_to_onnx(robot: RobotDef, run_dir: Path, ckpts: list[Path]
 
 def task_for_run(robot: RobotDef, run_dir: Path) -> str:
   """Runs named ``*_amp*`` were trained on the ``-Amp`` task (different observations);
-  ``*_hybrid*`` on ``-SymAmp`` (same observations as the plain task)."""
+  ``*_hybrid*`` on ``-SymAmp`` (same observations as the plain task). ``*_mimic_rough``
+  runs map to ``-Mimic`` too: same observations and actions, and the rough scene's
+  raycast BVH needs GBs of GPU memory even for one env."""
   name = run_dir.name.lower()
   if "mimic" in name:
-    return f"{robot.task_id}-MimicRough" if "rough" in name else f"{robot.task_id}-Mimic"
+    return f"{robot.task_id}-Mimic"
   if "hybrid" in name:
     return f"{robot.task_id}-SymAmp"
   return f"{robot.task_id}-Amp" if "amp" in name else robot.task_id
