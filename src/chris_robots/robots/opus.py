@@ -4,7 +4,7 @@ Hobby servos; the URDF has no actuator data so we use Z-Bot-class servo gains wi
 the same sim-only leg torque boost.
 """
 
-from chris_robots.robots.base import ActuatorGroup, RobotDef
+from chris_robots.robots.base import SOFT_SERVO, ActuatorGroup, RobotDef
 
 _LEGS = (r".*hip.*", r".*knee.*", r".*ankle.*")
 _ARMS = (r".*shoulder.*", r".*elbow.*")
@@ -12,8 +12,10 @@ _ARMS = (r".*shoulder.*", r".*elbow.*")
 OPUS = RobotDef(
   name="opus",
   actuators=(
-    ActuatorGroup("servo_leg", _LEGS, effort_limit=4.5, armature=0.004),
-    ActuatorGroup("servo_arm", _ARMS, effort_limit=2.0, armature=0.002),
+    ActuatorGroup(
+      "servo_leg", _LEGS, effort_limit=3.0, armature=0.004, **{**SOFT_SERVO, "natural_freq_hz": 8.0}
+    ),
+    ActuatorGroup("servo_arm", _ARMS, effort_limit=1.0, armature=0.002, **SOFT_SERVO),
   ),
   action_scale={r".*(hip|knee|ankle).*": 0.5, r".*(shoulder|elbow|wrist|gripper).*": 0.25},
   walk_vel=0.25,
@@ -24,4 +26,7 @@ OPUS = RobotDef(
   com_offset=0.01,
   hip_adduction_min=0.5,
   arm_swing_gain=1.5,  # light arms: ask for a bigger swing so it reads on camera
+  action_rate_weight=-0.15,  # hobby servos: smooth, not twitchy
+  sway_roll_deg=6.0,
+  sway_yaw_deg=8.0,
 )

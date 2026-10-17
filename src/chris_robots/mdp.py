@@ -11,7 +11,7 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import ContactSensor, TerrainHeightSensor
-from mjlab.utils.lab_api.math import quat_apply
+from mjlab.utils.lab_api.math import quat_apply, quat_apply_inverse
 
 # ------------------------------------------------------------------ gait clock (phase)
 
@@ -35,6 +35,8 @@ class GaitClockCommandCfg(CommandTermCfg):
   duty_walk: float = 0.6
   duty_run: float = 0.4
   standing_threshold: float = 0.08
+  period_jitter: float = 0.1
+  """Per-episode random scale of the period in [1 - jitter, 1 + jitter] (gait variety)."""
   resampling_time_range: tuple[float, float] = (1e9, 1e9)
 
   def build(self, env: ManagerBasedRlEnv) -> GaitClockCommand:
@@ -50,6 +52,7 @@ class GaitClockCommand(CommandTerm):
     self.period = torch.full((self.num_envs,), cfg.period_walk, device=self.device)
     self.duty = torch.full((self.num_envs,), cfg.duty_walk, device=self.device)
     self.moving = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+    self.period_scale = torch.ones(self.num_envs, device=self.device)
     self._command = torch.zeros(self.num_envs, 2, device=self.device)
     self._env_ref = env
 
@@ -62,6 +65,10 @@ class GaitClockCommand(CommandTerm):
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     self.phase[env_ids] = torch.rand(len(env_ids), device=self.device)
+    j = self.cfg.period_jitter
+    self.period_scale[env_ids] = 1.0 + j * (
+      2.0 * torch.rand(len(env_ids), device=self.device) - 1.0
+    )
 
   def _update_command(self, env_ids: torch.Tensor | None) -> None:
     twist = self._env_ref.command_manager.get_command(self.cfg.twist_name)
@@ -70,7 +77,9 @@ class GaitClockCommand(CommandTerm):
     s = torch.clamp(
       (speed - self.cfg.walk_vel) / max(1e-6, self.cfg.run_vel - self.cfg.walk_vel), 0.0, 1.0
     )
-    self.period = self.cfg.period_walk + s * (self.cfg.period_run - self.cfg.period_walk)
+    self.period = (
+      self.cfg.period_walk + s * (self.cfg.period_run - self.cfg.period_walk)
+    ) * self.period_scale
     self.duty = self.cfg.duty_walk + s * (self.cfg.duty_run - self.cfg.duty_walk)
     self.moving = speed > self.cfg.standing_threshold
     if env_ids is None:  # per-step path: advance the clock
@@ -294,8 +303,123 @@ def lean(
   command = env.command_manager.get_command(command_name)
   assert command is not None
   target = torch.sin(lean_at_run * torch.clamp(command[:, 0], min=0.0) / run_vel)
-  err = torch.square(g[:, 0] - target) + torch.square(g[:, 1])
+  err = torch.square(g[:, 0] - target)  # roll is shaped by torso_sway, not pulled to zero
   return torch.exp(-err / std**2)
+
+
+# ------------------------------------------------------------------ animation layer
+# Sway targets driven by the gait clock. Amplitudes follow published walking kinematics
+# (pelvic transverse rotation ~8 deg total growing with speed, pelvic list ~10-15 deg,
+# COM vertical excursion ~5 cm p-p = 3% of height, step width 8-10 cm), exaggerated a
+# little because these robots have no waist: the whole upper body is the pelvis.
+
+
+class torso_sway:
+  """Roll toward the stance leg, following the clock: g_y target = sin(roll) * cos(2 pi (phi - duty/2)).
+
+  Peaks over the left foot at left mid-stance and over the right foot half a cycle
+  later. Zero when standing (clock frozen, target still well defined but we gate it).
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.left_sign = float(cfg.params["left_sign"])
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    clock_name: str,
+    left_sign: float,
+    roll_deg: float,
+    std: float,
+  ) -> torch.Tensor:
+    del left_sign
+    asset: Entity = env.scene["robot"]
+    clock = _clock(env, clock_name)
+    phase = clock.phase - 0.5 * clock.duty
+    target = self.left_sign * math.sin(math.radians(roll_deg)) * torch.cos(2.0 * math.pi * phase)
+    target = torch.where(clock.moving, target, torch.zeros_like(target))
+    g_y = asset.data.projected_gravity_b[:, 1]
+    return torch.exp(-torch.square(g_y - target) / std**2)
+
+
+class track_yaw_sway:
+  """Yaw-rate tracking with a stride-synchronous pelvic rotation on top.
+
+  Pelvis yaw = -Psi cos(2 pi phi) (swing-side hip forward, i.e. right hip forward at
+  right touchdown), so the extra yaw rate is Psi * 2 pi / T * sin(2 pi phi). Replaces
+  mjlab's track_angular_velocity, which would otherwise penalise any sway.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.left_sign = float(cfg.params["left_sign"])
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    clock_name: str,
+    left_sign: float,
+    yaw_deg: float,
+    std: float,
+  ) -> torch.Tensor:
+    del left_sign
+    asset: Entity = env.scene["robot"]
+    clock = _clock(env, clock_name)
+    command = env.command_manager.get_command(command_name)
+    assert command is not None
+    amp = math.radians(yaw_deg) * 2.0 * math.pi / clock.period
+    sway = self.left_sign * amp * torch.sin(2.0 * math.pi * clock.phase)
+    sway = torch.where(clock.moving, sway, torch.zeros_like(sway))
+    target = command[:, 2] + sway
+    actual = asset.data.root_link_ang_vel_b[:, 2]
+    return torch.exp(-torch.square(actual - target) / std**2)
+
+
+def base_bob(
+  env: ManagerBasedRlEnv,
+  clock_name: str,
+  amplitude_m: float,
+  std: float,
+) -> torch.Tensor:
+  """Vertical COM bob: highest at mid single-support, two cycles per stride.
+
+  Tracked through the base vertical velocity so no absolute height is prescribed:
+  h = A cos(4 pi (phi - duty/2))  =>  dh/dt = -A 4 pi / T sin(4 pi (phi - duty/2)).
+  """
+  asset: Entity = env.scene["robot"]
+  clock = _clock(env, clock_name)
+  phase = clock.phase - 0.5 * clock.duty
+  target = -amplitude_m * 4.0 * math.pi / clock.period * torch.sin(4.0 * math.pi * phase)
+  target = torch.where(clock.moving, target, torch.zeros_like(target))
+  vz = asset.data.root_link_lin_vel_w[:, 2]
+  return torch.exp(-torch.square(vz - target) / std**2)
+
+
+class feet_apart:
+  """Penalise a catwalk stance: lateral foot separation (in the base frame) below
+  ``min_frac`` of the init-pose separation, normalised so 1 = feet on one line."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene["robot"]
+    ids, _ = asset.find_sites(list(cfg.params["site_names"]), preserve_order=True)
+    self.site_ids = torch.tensor(ids, device=env.device)
+    self.left_sign = float(cfg.params["left_sign"])
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    site_names: tuple[str, str],
+    left_index: int,
+    left_sign: float,
+    separation_m: float,
+    min_frac: float = 0.8,
+  ) -> torch.Tensor:
+    del site_names, left_sign
+    asset: Entity = env.scene["robot"]
+    p = asset.data.site_pos_w[:, self.site_ids]  # [B, 2, 3]
+    d = quat_apply_inverse(asset.data.root_link_quat_w, p[:, left_index] - p[:, 1 - left_index])
+    lateral = self.left_sign * d[:, 1]  # + = left foot on the left, - = crossed
+    return torch.clamp(min_frac * separation_m - lateral, min=0.0) / separation_m
 
 
 class stride:

@@ -6,7 +6,7 @@ rather than derived from real motor data. Leg torque is ~1.7x the real servo so 
 little robot can run (sim-only).
 """
 
-from chris_robots.robots.base import ActuatorGroup, RobotDef
+from chris_robots.robots.base import SOFT_SERVO, ActuatorGroup, RobotDef
 
 _LEGS = (r".*hip.*", r".*knee.*", r".*ankle.*")
 _SHOULDERS = (r".*shoulder.*",)
@@ -15,9 +15,9 @@ _FOREARMS = (r".*elbow.*", r".*gripper.*")
 ZBOT_V3 = RobotDef(
   name="zbot_v3",
   actuators=(
-    ActuatorGroup("sts3250_leg", _LEGS, effort_limit=5.0, armature=0.005),
-    ActuatorGroup("sts3250_arm", _SHOULDERS, effort_limit=3.0, armature=0.003),
-    ActuatorGroup("sts3215", _FOREARMS, effort_limit=2.0, armature=0.002),
+    ActuatorGroup("sts3250_leg", _LEGS, effort_limit=3.0, armature=0.005, **SOFT_SERVO),
+    ActuatorGroup("sts3250_arm", _SHOULDERS, effort_limit=1.5, armature=0.003, **SOFT_SERVO),
+    ActuatorGroup("sts3215", _FOREARMS, effort_limit=1.0, armature=0.002, **SOFT_SERVO),
   ),
   action_scale={r".*(hip|knee|ankle).*": 0.5, r".*(shoulder|elbow|wrist|gripper).*": 0.25},
   walk_vel=0.3,
@@ -27,4 +27,7 @@ ZBOT_V3 = RobotDef(
   push_vel=0.15,
   com_offset=0.01,
   arm_swing_gain=1.5,  # light arms: ask for a bigger swing so it reads on camera
+  action_rate_weight=-0.15,  # hobby servos: smooth, not twitchy
+  sway_roll_deg=6.0,
+  sway_yaw_deg=8.0,
 )

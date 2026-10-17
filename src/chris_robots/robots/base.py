@@ -27,10 +27,19 @@ NATURAL_FREQ = 10 * 2.0 * math.pi
 DAMPING_RATIO = 2.0
 
 
-def pd_from_armature(armature: float) -> tuple[float, float]:
-  kp = armature * NATURAL_FREQ**2
-  kd = 2.0 * DAMPING_RATIO * armature * NATURAL_FREQ
+def pd_from_armature(
+  armature: float, natural_freq_hz: float = 10.0, damping_ratio: float = DAMPING_RATIO
+) -> tuple[float, float]:
+  w = natural_freq_hz * 2.0 * math.pi
+  kp = armature * w**2
+  kd = 2.0 * damping_ratio * armature * w
   return kp, kd
+
+
+# Hobby-servo feel for the Feetech robots: lower closed-loop bandwidth and under-damped,
+# so the joints lag and overshoot a little instead of snapping to the target (the real
+# STS servos are slow and soft; the mjlab default 10 Hz / zeta 2 made them look CNC-stiff).
+SOFT_SERVO = {"natural_freq_hz": 6.5, "damping_ratio": 0.8}
 
 
 @dataclass(frozen=True)
@@ -45,9 +54,12 @@ class ActuatorGroup:
   kp: float | None = None
   kd: float | None = None
   """If kp/kd are None they're derived from the armature (see pd_from_armature)."""
+  natural_freq_hz: float = 10.0
+  damping_ratio: float = DAMPING_RATIO
+  """Closed-loop PD bandwidth. Lower + under-damped = softer, bouncier servo."""
 
   def gains(self) -> tuple[float, float]:
-    kp, kd = pd_from_armature(self.armature)
+    kp, kd = pd_from_armature(self.armature, self.natural_freq_hz, self.damping_ratio)
     return (self.kp if self.kp is not None else kp, self.kd if self.kd is not None else kd)
 
   def to_cfg(self) -> BuiltinPositionActuatorCfg:
@@ -148,6 +160,14 @@ class RobotDef:
   base_body: str = "base"
   foot_friction: float = 0.8
   arm_swing_gain: float = 1.0
+  sway_roll_deg: float = 5.0
+  """Torso roll toward the stance leg (pelvic list is ~5-7 deg each way in humans)."""
+  sway_yaw_deg: float = 6.0
+  """Pelvic rotation amplitude (humans: ~4 deg each way, more when fast)."""
+  bob_frac: float = 0.03
+  """Vertical bob amplitude as a fraction of standing height (humans ~3%)."""
+  action_rate_weight: float = -0.05
+  """Penalty on action change per step; stronger for twitchy little servos."""
   """Cosmetic: reward each shoulder pitch for following the opposite hip pitch with
   this gain (0 disables the term)."""
   lean_at_run: float = 0.2
@@ -260,6 +280,21 @@ class RobotDef:
       elif "elbow" in n and n not in pitch_elbows:
         out.append(n)
     return tuple(out)
+
+  def foot_lateral(self) -> tuple[float, float]:
+    """(left_sign, separation_m): +1 if the left foot is on +y of the base at the init
+    pose, and the lateral distance between the foot sites there."""
+    model = mujoco.MjModel.from_xml_path(str(self.xml))
+    data = mujoco.MjData(model)
+    data.qpos[:] = self.init_qpos(model)
+    mujoco.mj_forward(model, data)
+    left = self.foot_order.index("left")
+    ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, n) for n in self.foot_sites]
+    d = data.site_xpos[ids[left]] - data.site_xpos[ids[1 - left]]
+    base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, self.base_body)
+    R = data.xmat[base].reshape(3, 3)
+    d_b = R.T @ d
+    return (1.0 if d_b[1] >= 0 else -1.0), float(abs(d_b[1]))
 
   def arm_swing_pairs(self) -> tuple[tuple[str, str, float, float], ...]:
     """(shoulder_pitch, opposite hip_pitch, shoulder sign, hip sign) per side.

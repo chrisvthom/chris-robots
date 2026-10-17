@@ -8,6 +8,8 @@ randomization) is scaled from the RobotDef so the same code serves a 1.4 m,
 
 from __future__ import annotations
 
+import math
+
 from mjlab.envs import ManagerBasedRlEnvCfg, mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
@@ -139,7 +141,7 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
       "std": 0.35,
     },
   )
-  cfg.rewards["action_rate_l2"].weight = -0.05
+  cfg.rewards["action_rate_l2"].weight = robot.action_rate_weight
 
   # Gait: a phase clock prescribes *when* each foot is on the ground (left and right
   # half a period apart, duty factor 0.6 walking -> 0.4 running) and how high the
@@ -184,6 +186,50 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
       "clock_name": "gait_clock",
       "left_index": left_index,
       "target_height": robot.foot_clearance,
+    },
+  )
+  left_sign, separation = robot.foot_lateral()
+  cfg.rewards["feet_apart"] = RewardTermCfg(
+    func=chris_mdp.feet_apart,
+    weight=-1.0,
+    params={
+      "site_names": robot.foot_sites,
+      "left_index": left_index,
+      "left_sign": left_sign,
+      "separation_m": separation,
+      "min_frac": 0.8,
+    },
+  )
+  # ---- animation layer: torso sway / pelvic rotation / vertical bob from the clock ----
+  cfg.rewards.pop("track_angular_velocity")
+  cfg.rewards["track_yaw_sway"] = RewardTermCfg(
+    func=chris_mdp.track_yaw_sway,
+    weight=2.0,
+    params={
+      "command_name": "twist",
+      "clock_name": "gait_clock",
+      "left_sign": left_sign,
+      "yaw_deg": robot.sway_yaw_deg,
+      "std": math.sqrt(0.5),
+    },
+  )
+  cfg.rewards["torso_sway"] = RewardTermCfg(
+    func=chris_mdp.torso_sway,
+    weight=1.0,
+    params={
+      "clock_name": "gait_clock",
+      "left_sign": left_sign,
+      "roll_deg": robot.sway_roll_deg,
+      "std": 0.06,
+    },
+  )
+  cfg.rewards["base_bob"] = RewardTermCfg(
+    func=chris_mdp.base_bob,
+    weight=0.5,
+    params={
+      "clock_name": "gait_clock",
+      "amplitude_m": robot.bob_frac * robot.standing_height,
+      "std": 0.5 * robot.bob_frac * robot.standing_height * 4.0 * math.pi / robot.gait_period,
     },
   )
   cfg.rewards["foot_flat"] = RewardTermCfg(
