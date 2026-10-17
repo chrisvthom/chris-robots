@@ -188,8 +188,13 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   )
   cfg.rewards["foot_flat"] = RewardTermCfg(
     func=chris_mdp.foot_flat,
-    weight=-5.0,
-    params={"site_names": robot.foot_sites, "up_local": robot.foot_up_axes()},
+    weight=-2.0,  # rad of stance-sole tilt beyond 3 deg: 10 deg tilt -> -0.25/step/foot
+    params={
+      "site_names": robot.foot_sites,
+      "up_local": robot.foot_up_axes(),
+      "sensor_name": "feet_ground_contact",
+      "dead_zone_deg": 3.0,
+    },
   )
 
   pairs = robot.arm_swing_pairs() if robot.arm_swing_gain > 0 else ()

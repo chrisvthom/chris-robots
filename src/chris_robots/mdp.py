@@ -142,10 +142,11 @@ def gait_swing_height(
 
 
 class foot_flat:
-  """Penalise sole tilt: 1 - (sole up-axis . world z), averaged over both feet.
+  """Penalise stance-foot sole tilt (radians beyond a dead-zone), summed over feet.
 
-  The up axis is read off the foot sites' orientation at the init pose, so it works
-  for any foot frame convention.
+  Tilt = angle between the sole up-axis and world z. Only feet in ground contact are
+  penalised (the swing foot may pitch for a natural heel-strike). The up axis is read
+  off the foot sites' orientation at the init pose, so it works for any foot frame.
   """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
@@ -161,7 +162,8 @@ class foot_flat:
     env: ManagerBasedRlEnv,
     site_names: tuple[str, ...],
     up_local: tuple,
-    angle_scale: float = 1.0,
+    sensor_name: str | None = None,
+    dead_zone_deg: float = 3.0,
   ) -> torch.Tensor:
     del site_names, up_local
     asset: Entity = env.scene["robot"]
@@ -169,7 +171,14 @@ class foot_flat:
     up_w = quat_apply(q.reshape(-1, 4), self.up_local.repeat(q.shape[0], 1)).reshape(
       q.shape[0], -1, 3
     )
-    return (1.0 - up_w[..., 2]).mean(dim=1) * angle_scale
+    tilt = torch.acos(up_w[..., 2].clamp(-1.0, 1.0))  # [B, 2] rad
+    excess = (tilt - math.radians(dead_zone_deg)).clamp(min=0.0)
+    if sensor_name is not None:
+      sensor: ContactSensor = env.scene[sensor_name]
+      assert sensor.data.current_contact_time is not None
+      in_contact = sensor.data.current_contact_time > 0.0  # [B, 2]; sensor order == model order
+      excess = excess * in_contact.float()
+    return excess.sum(dim=1)
 
 
 class arm_swing:

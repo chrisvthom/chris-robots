@@ -40,6 +40,9 @@ class GaitTrace:
   base_vel_b: np.ndarray  # [T, 3]
   hip_pitch: np.ndarray  # [T, 2] (left, right), sign-normalised so + = thigh forward
   knee: np.ndarray  # [T, 2] |flexion|
+  arm_pitch: np.ndarray  # [T, 2] shoulder pitch deviation from default (rad)
+  arm_lateral: np.ndarray  # [T] RMS over shoulder roll/yaw + wrist deviation (rad)
+  elbow: np.ndarray  # [T, 2] elbow deviation from default (rad)
   action_rate: np.ndarray  # [T] mean |a_t - a_{t-1}|
   fell_at: float | None = None
   floor_z: float = 0.0
@@ -64,6 +67,9 @@ class GaitMetrics:
   symmetry: float | None  # L/R hip-pitch correlation at half-period lag (1 = perfect)
   action_rate: float
   mean_speed: float
+  arm_swing_rad: float  # RMS shoulder-pitch deviation (front/back swing amplitude)
+  arm_lateral_rad: float  # RMS lateral arm deviation (roll/yaw/wrist) - should be small
+  elbow_rad: float  # RMS elbow deviation
   verdict: str
   reasons: list[str] = field(default_factory=list)
 
@@ -79,6 +85,7 @@ class GaitMetrics:
       f"  tilt {s.stance_tilt_deg[0]:.0f}/{s.stance_tilt_deg[1]:.0f} deg"
       f"  corner {s.corner_frac[0]:.2f}/{s.corner_frac[1]:.2f}  slip {s.slip_mps[0]:.2f}/{s.slip_mps[1]:.2f}"
       f"  T {per}  sym {sym}  act_rate {s.action_rate:.2f}"
+      f"  arms fb/lat/elbow {s.arm_swing_rad:.2f}/{s.arm_lateral_rad:.2f}/{s.elbow_rad:.2f}"
     )
 
 
@@ -113,6 +120,13 @@ def record(
   names = runner.cfg["joints"]["names"]
   hip_idx = [_find_joint(names, s, "hip_pitch") for s in sides]
   knee_idx = [_find_joint(names, s, "knee") for s in sides]
+  sh_idx = [_find_joint(names, s, "shoulder_pitch") for s in sides]
+  el_idx = [_find_joint(names, s, "elbow") for s in sides]
+  lat_idx = [
+    i
+    for i, nm in enumerate(names)
+    if any(k in nm for k in ("shoulder_roll", "shoulder_yaw", "wrist"))
+  ]
   # + = thigh forward. A pitch joint about +y moves a hanging limb backwards for +q.
   hip_sign = [
     -np.sign(joint_axis_y.get(names[i], 1.0)) if (joint_axis_y and i is not None) else 1.0
@@ -135,6 +149,9 @@ def record(
   bvel = np.zeros((n, 3))
   hip = np.zeros((n, 2))
   knee = np.zeros((n, 2))
+  arm_pitch = np.zeros((n, 2))
+  arm_lat = np.zeros(n)
+  elbow = np.zeros((n, 2))
   arate = np.zeros(n)
   fell_at = None
   prev_action = runner.last_action.copy()
@@ -165,6 +182,12 @@ def record(
         hip[k, j] = hip_sign[j] * q[hip_idx[j]]
       if knee_idx[j] is not None:
         knee[k, j] = abs(d.qpos[runner.qpos_adr][knee_idx[j]])
+      if sh_idx[j] is not None:
+        arm_pitch[k, j] = q[sh_idx[j]]
+      if el_idx[j] is not None:
+        elbow[k, j] = q[el_idx[j]]
+    if lat_idx:
+      arm_lat[k] = float(np.sqrt(np.mean(q[lat_idx] ** 2)))
     if fell_at is None and (
       runner.upright() < 0.5 or bpos[k, 2] < 0.4 * runner.cfg["sim"]["standing_base_height_m"]
     ):
@@ -183,6 +206,9 @@ def record(
     base_vel_b=bvel,
     hip_pitch=hip,
     knee=knee,
+    arm_pitch=arm_pitch,
+    arm_lateral=arm_lat,
+    elbow=elbow,
     action_rate=arate,
     fell_at=fell_at,
     floor_z=0.0,
@@ -347,6 +373,9 @@ def analyze(
     symmetry=sym,
     action_rate=float(trace.action_rate.mean()),
     mean_speed=mean_speed,
+    arm_swing_rad=float(np.sqrt(np.mean(trace.arm_pitch**2))),
+    arm_lateral_rad=float(np.sqrt(np.mean(trace.arm_lateral**2))),
+    elbow_rad=float(np.sqrt(np.mean(trace.elbow**2))),
     verdict=verdict,
     reasons=reasons,
   )
