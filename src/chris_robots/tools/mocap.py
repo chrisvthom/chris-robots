@@ -27,7 +27,8 @@ import mujoco
 import numpy as np
 
 from chris_robots import ROBOTS_DIR
-from chris_robots.robots import ROBOTS_BY_NAME as ROBOTS, RobotDef
+from chris_robots.robots import ROBOTS_BY_NAME as ROBOTS
+from chris_robots.robots import RobotDef
 
 DATA_DIR = ROBOTS_DIR.parent / "data" / "mocap"
 MEDIA_DIR = ROBOTS_DIR.parent / "media" / "mocap"
@@ -69,9 +70,7 @@ _PITCH_ROLES = {"hip_pitch", "knee", "ankle_pitch", "shoulder_pitch", "elbow"}
 def _g1_xml() -> Path:
   import mjlab
 
-  return (
-    Path(mjlab.__file__).parent / "asset_zoo" / "robots" / "unitree_g1" / "xmls" / "g1.xml"
-  )
+  return Path(mjlab.__file__).parent / "asset_zoo" / "robots" / "unitree_g1" / "xmls" / "g1.xml"
 
 
 def canonical_role(joint_name: str) -> tuple[str, str] | None:
@@ -159,12 +158,16 @@ class _Chain:
     return None
 
   def leg_length(self) -> float:
-    return float(np.linalg.norm(self.anchor(("left", "hip_pitch")) - self.anchor(("left", "ankle_pitch"))))
+    return float(
+      np.linalg.norm(self.anchor(("left", "hip_pitch")) - self.anchor(("left", "ankle_pitch")))
+    )
 
 
 def build_mapping(robot: _Chain, g1: _Chain) -> list[tuple[str, int, float, float]]:
   """Return ``(robot_joint_name, g1_column, sign, offset)`` for every mappable joint."""
-  g1_order = [mujoco.mj_id2name(g1.model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(1, g1.model.njnt)]
+  g1_order = [
+    mujoco.mj_id2name(g1.model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(1, g1.model.njnt)
+  ]
   out = []
   for key, j in robot.joints.items():
     if key not in g1.joints:
@@ -274,12 +277,14 @@ def retarget_clip(
   # FK for foot positions, and to put the lowest foot on the floor.
   data = mujoco.MjData(model)
   foot_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, s) for s in robot.foot_sites]
-  qadr = [model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)] for n in chain.names]
+  qadr = [
+    model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)] for n in chain.names
+  ]
   foot_w = np.zeros((len(t_out), len(foot_ids), 3))
   for k in range(len(t_out)):
     data.qpos[:3] = root_pos[k]
     data.qpos[3:7] = root_quat[k]
-    for a, i in zip(qadr, range(nj)):
+    for i, a in enumerate(qadr):
       data.qpos[a] = joint_pos[k, i]
     mujoco.mj_kinematics(model, data)
     foot_w[k] = data.site_xpos[foot_ids]
@@ -324,43 +329,103 @@ def download_clips(patterns: tuple[str, ...] = ("walk", "run", "sprint")) -> lis
   return [local / f for f in wanted]
 
 
+def _lit_model(robot: RobotDef, size: int) -> mujoco.MjModel:
+  """Robot MJCF plus a floor and lights, for offscreen rendering."""
+  spec = mujoco.MjSpec.from_file(str(robot.xml))
+  floor = spec.worldbody.add_geom()
+  floor.type = mujoco.mjtGeom.mjGEOM_PLANE
+  floor.size[:] = [20.0, 20.0, 0.1]
+  floor.rgba[:] = [0.55, 0.6, 0.68, 1.0]
+  light = spec.worldbody.add_light()
+  light.pos[:] = [1.0, -2.0, 3.0 * robot.standing_height + 1.0]
+  light.dir[:] = [-0.3, 0.6, -1.0]
+  light.castshadow = True
+  spec.visual.headlight.ambient[:] = [0.45, 0.45, 0.45]
+  spec.visual.headlight.diffuse[:] = [0.6, 0.6, 0.6]
+  spec.visual.global_.offwidth = max(spec.visual.global_.offwidth, size)
+  spec.visual.global_.offheight = max(spec.visual.global_.offheight, size)
+  return spec.compile()
+
+
 def render_playback(
-  robot: RobotDef, chain: _Chain, clip: dict[str, np.ndarray], out_png: Path, n_frames: int = 10
+  robot: RobotDef,
+  chain: _Chain,
+  clip: dict[str, np.ndarray],
+  out_png: Path,
+  n_frames: int = 10,
+  start_s: float | None = None,
+  mp4_s: float = 0.0,
 ) -> None:
-  """Contact sheet of the retargeted clip played back kinematically (sanity check)."""
+  """Contact sheet (and optional mp4) of the retargeted clip played back kinematically.
+
+  Picks the window around the fastest 1.5 s of the clip unless ``start_s`` is given.
+  """
+  import subprocess
+
   from PIL import Image
 
-  model = chain.model
-  model.vis.global_.offwidth = max(model.vis.global_.offwidth, 400)
-  model.vis.global_.offheight = max(model.vis.global_.offheight, 400)
+  size = 400
+  model = _lit_model(robot, size)
   data = mujoco.MjData(model)
-  qadr = [model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)] for n in chain.names]
-  renderer = mujoco.Renderer(model, height=400, width=400)
+  qadr = [
+    model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)] for n in chain.names
+  ]
+  renderer = mujoco.Renderer(model, height=size, width=size)
   cam = mujoco.MjvCamera()
   cam.type = mujoco.mjtCamera.mjCAMERA_FREE
   cam.azimuth = 135
-  cam.elevation = -10
-  cam.distance = 3.2 * robot.standing_height
+  cam.elevation = -12
+  cam.distance = 3.0 * robot.standing_height
   T = clip["joint_pos"].shape[0]
-  ks = np.linspace(T * 0.3, T * 0.3 + OUT_FPS * 1.5, n_frames).astype(int).clip(0, T - 1)
-  tiles = []
-  for k in ks:
+  if start_s is None:
+    speed = np.linalg.norm(clip["root_lin_vel_b"][:, :2], axis=1)
+    win = int(OUT_FPS * 1.5)
+    smooth = np.convolve(speed, np.ones(win) / win, mode="valid")
+    k0 = int(np.argmax(smooth))
+  else:
+    k0 = int(start_s * OUT_FPS)
+
+  def pose(k: int) -> None:
     data.qpos[:3] = clip["root_pos"][k]
     data.qpos[3:7] = clip["root_quat"][k]
-    for a, i in zip(qadr, range(len(qadr))):
+    for i, a in enumerate(qadr):
       data.qpos[a] = clip["joint_pos"][k, i]
     mujoco.mj_kinematics(model, data)
     cam.lookat[:] = [*clip["root_pos"][k, :2], 0.5 * robot.standing_height]
+
+  ks = np.linspace(k0, k0 + OUT_FPS * 1.5, n_frames).astype(int).clip(0, T - 1)
+  tiles = []
+  for k in ks:
+    pose(int(k))
     renderer.update_scene(data, camera=cam)
     tiles.append(renderer.render().copy())
-  renderer.close()
   cols = 5
   rows = math.ceil(len(tiles) / cols)
-  sheet = Image.new("RGB", (400 * cols, 400 * rows))
+  sheet = Image.new("RGB", (size * cols, size * rows))
   for i, t in enumerate(tiles):
-    sheet.paste(Image.fromarray(t), ((i % cols) * 400, (i // cols) * 400))
+    sheet.paste(Image.fromarray(t), ((i % cols) * size, (i // cols) * size))
   out_png.parent.mkdir(parents=True, exist_ok=True)
   sheet.save(out_png)
+
+  if mp4_s > 0:
+    mp4 = out_png.with_suffix(".mp4")
+    proc = subprocess.Popen(
+      [
+        "ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-s", f"{size}x{size}", "-r", str(OUT_FPS), "-i", "-",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "22", str(mp4),
+      ],
+      stdin=subprocess.PIPE,
+    )  # fmt: skip
+    assert proc.stdin is not None
+    k1 = min(T, k0 + int(mp4_s * OUT_FPS))
+    for k in range(max(0, k0 - OUT_FPS), k1):
+      pose(k)
+      renderer.update_scene(data, camera=cam)
+      proc.stdin.write(renderer.render().tobytes())
+    proc.stdin.close()
+    proc.wait()
+  renderer.close()
 
 
 def main() -> None:
@@ -401,9 +466,13 @@ def main() -> None:
   np.savez_compressed(DATA_DIR / f"{robot.name}.npz", **out)
   print(f"wrote {DATA_DIR / f'{robot.name}.npz'}: {out['joint_pos'].shape[0]} frames")
   if args.render:
-    for i in (0, len(clips) // 2, len(clips) - 1):
-      render_playback(robot, chain, clips[i], MEDIA_DIR / f"{robot.name}_{paths[i].stem}.png")
-    print(f"rendered contact sheets to {MEDIA_DIR}")
+    for stem in ("walk1_subject5", "run1_subject2", "sprint1_subject2"):
+      if stem in [p.stem for p in paths]:
+        i = [p.stem for p in paths].index(stem)
+        render_playback(
+          robot, chain, clips[i], MEDIA_DIR / f"{robot.name}_{stem}.png", mp4_s=8.0
+        )
+    print(f"rendered playback sheets/mp4s to {MEDIA_DIR}")
 
 
 if __name__ == "__main__":

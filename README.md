@@ -26,9 +26,11 @@ src/chris_robots/
   robots/<name>.py      actuator gains, posture tolerances, speed ranges per robot
   env_cfgs.py           mjlab velocity task config, scaled by robot size
   rl_cfg.py             PPO config (+ -Sym variants with mirror augmentation)
-  mdp.py                gait clock, schedule/swing/flat-foot/arm rewards
+  mdp.py                gait clock, schedule/swing/flat-foot/arm/torso-sway rewards
   symmetry.py           left/right mirror map for rsl-rl's Symmetry extension
-  tools/                import-robots, render-robots, smoke-test, eval-video, export-web, curves
+  amp.py                adversarial motion prior (discriminator reward) for the -Amp variants
+  tools/                import-robots, render-robots, smoke-test, eval-video, export-web, curves, mocap
+data/mocap/             (gitignored) downloaded mocap + retargeted per-robot feature files
 policies/<name>/        exported bundle: scene.xml + assets + policy.onnx + policy.json + preview
 media/                  renders
 ```
@@ -98,6 +100,20 @@ replaced by a small "animated character" set, see `src/chris_robots/env_cfgs.py`
   front/back rather than flapping.
 * **Feet**: stance-sole tilt penalty (beyond 3°) and foot-slip penalty; no air-time or
   stride rewards (those were exploited as "hover one foot and skate on the other").
+  A `feet_apart` penalty stops the "catwalk" (feet on one line, clipping through each
+  other): lateral foot separation in the base frame must stay above ~80 % of the
+  standing hip width.
+* **Torso**: no "stay level" terms. Instead the clock drives a human-like animation layer
+  with amplitudes taken from gait-lab kinematics and exaggerated for readability: torso
+  roll toward the stance leg (pelvic list, ~9°), pelvic yaw rotation (~10°, added to the
+  commanded yaw rate) and a vertical bob at twice the stride frequency (~5 % of height,
+  lowest at double support). The forward lean still grows with speed.
+* **Variety**: the clock period is randomised ±10 % per episode, so the runtime can vary
+  the gait rate (`policy.json: gait_clock.period_scale_range`).
+* **Soft servos**: the Feetech-driven robots (Z-Bot V2/V3, Opus) use a deliberately
+  under-powered hobby-servo model: PD gains for a 5 Hz / ζ 0.6 closed loop (vs 10 Hz /
+  ζ 2 on the K-Bot), 3 N·m legs, 1 N·m arms and a stronger action-rate penalty, so the
+  motion is compliant and bouncy rather than snapped into place.
 * **Symmetry**: the `-Sym` task variants add rsl-rl's mirror data augmentation and mirror
   loss. The left/right mapping is derived from the MuJoCo joint axes
   (`src/chris_robots/symmetry.py`) and checked against physically mirrored states.
@@ -105,8 +121,32 @@ replaced by a small "animated character" set, see `src/chris_robots/env_cfgs.py`
 `uv run eval-video <robot>` renders a scripted stand / walk / turn / sidestep / jog / sprint
 sequence for a few checkpoints and prints a gait analysis per segment (steps, duty,
 alternation, stride, swing height, mid-stance sole tilt, corner contacts, period,
-left/right symmetry, arm swing amplitudes) with a WALK / GLITCH / FELL verdict, plus a
-gait diagram (`*_gait.png`). This is how the policies above were judged.
+left/right symmetry, arm swing amplitudes, torso roll/yaw sway, bob, step width, joint
+"sharpness") with a WALK / GLITCH / FELL verdict, plus a gait diagram (`*_gait.png`).
+This is how the policies above were judged.
+
+### Motion prior from mocap (`-Amp` variants)
+
+The hand-made animation layer above is one way to get a human-looking gait. The
+`Chris-Velocity-Flat-<Robot>-Amp` tasks replace it (clock, posture prior, lean, arm swing,
+sway, bob) with an Adversarial Motion Prior (Peng et al. 2021): a discriminator is
+trained online to tell retargeted human motion-capture transitions from the policy's,
+and its output is the style reward alongside velocity tracking.
+
+```sh
+MUJOCO_GL=egl uv run mocap kbot --render     # download + retarget, data/mocap/kbot.npz, media/mocap/*
+uv run train Chris-Velocity-Flat-Kbot-Amp --env.scene.num-envs 4096 --agent.run-name v1_amp
+```
+
+Reference motion is Ubisoft's LAFAN1 (walk/run/sprint clips) as retargeted to the
+Unitree G1 by Unitree (`lvhaidong/LAFAN1_Retargeting_Dataset`, CC BY-NC-ND 4.0, so it is
+downloaded on demand and not stored here). `mocap.py` maps G1 joints onto ours by role
+(`left hip pitch` ...), fixing axis sign and rest-pose offset from the two MJCFs, scales
+lengths by leg length and time by its square root, and writes the AMP features
+(joint pos/vel, root velocity, gravity, height, foot positions in the base frame).
+The discriminator (`amp.py`) lives inside a reward term and refits itself every rollout,
+so the standard mjlab `train`/`play`/`eval-video`/`export-web` tooling is unchanged;
+runs named `*_amp*` are evaluated with the AMP observation layout (no gait clock).
 
 ## Modelling notes
 

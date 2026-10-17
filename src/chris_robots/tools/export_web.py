@@ -211,7 +211,7 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
     for j in meta["joint_names"]
   ]
   v, run, w = robot.walk_vel, robot.max_lin_vel, robot.max_ang_vel
-  return {
+  out = {
     "robot": robot.name,
     "display_name": robot.display_name,
     "source_run": source_name,
@@ -264,7 +264,9 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
       },
       "suggested_walk": [v, 0.0, 0.0],
     },
-    "gait_clock": {
+  }
+  if any(t["name"] == "gait_clock" for t in layout):
+    out["gait_clock"] = {
       "note": (
         "phi advances by control_dt / period each control step while "
         "speed = |cmd_xy| + 0.3*|cmd_wz| > standing_threshold, else holds. "
@@ -281,8 +283,8 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
         "Training randomised the period by this factor per episode; the policy follows "
         "whatever clock it is given, so a runtime may vary the scale for gait variety."
       ),
-    },
-  }
+    }
+  return out
 
 
 # --------------------------------------------------------------------------- runtime (check)

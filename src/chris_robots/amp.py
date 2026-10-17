@@ -131,9 +131,7 @@ class amp_style:
     grav = d.projected_gravity_b
     height = d.root_link_pos_w[:, 2:3]
     feet = d.site_pos_w[:, self.site_ids] - d.root_link_pos_w[:, None, :]
-    feet_b = torch.cat(
-      [quat_apply_inverse(quat, feet[:, i]) for i in range(feet.shape[1])], dim=1
-    )
+    feet_b = torch.cat([quat_apply_inverse(quat, feet[:, i]) for i in range(feet.shape[1])], dim=1)
     return torch.cat([q, qd, lin_b, ang_b, grav, height, feet_b], dim=1)
 
   def norm(self, x: torch.Tensor) -> torch.Tensor:

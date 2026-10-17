@@ -53,12 +53,13 @@ def export_checkpoints_to_onnx(robot: RobotDef, run_dir: Path, ckpts: list[Path]
 
   import chris_robots  # noqa: F401  (registers tasks)
 
-  env_cfg = load_env_cfg(robot.task_id, play=True)
+  task_id = task_for_run(robot, run_dir)
+  env_cfg = load_env_cfg(task_id, play=True)
   env_cfg.scene.num_envs = 1
-  agent_cfg = load_rl_cfg(robot.task_id)
+  agent_cfg = load_rl_cfg(task_id)
   env = ManagerBasedRlEnv(cfg=env_cfg, device="cuda:0")
   wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-  runner = load_runner_cls(robot.task_id)(wrapped, asdict(agent_cfg), device="cuda:0")
+  runner = load_runner_cls(task_id)(wrapped, asdict(agent_cfg), device="cuda:0")
   metadata = get_base_metadata(env, run_dir.name)
   for ckpt, out in todo:
     runner.load(str(ckpt), load_cfg={"actor": True}, strict=True, map_location="cuda:0")
@@ -67,6 +68,11 @@ def export_checkpoints_to_onnx(robot: RobotDef, run_dir: Path, ckpts: list[Path]
     print(f"  exported {out.relative_to(_REPO_ROOT)}")
   env.close()
   return outs
+
+
+def task_for_run(robot: RobotDef, run_dir: Path) -> str:
+  """Runs named ``*_amp*`` were trained on the ``-Amp`` task (different observations)."""
+  return f"{robot.task_id}-Amp" if "amp" in run_dir.name.lower() else robot.task_id
 
 
 def pick_checkpoints(run_dir: Path, spec: str) -> list[Path]:
