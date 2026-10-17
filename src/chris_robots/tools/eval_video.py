@@ -253,7 +253,7 @@ def render_eval(
       draw.rectangle([0, crop.height - 28, crop_w, crop.height], fill=(0, 0, 0))
       draw.text((8, crop.height - 24), frame_meta[k], font=font_small, fill=(230, 230, 230))
       sheet_frames.append(crop)
-  cols = per_seg * 2
+  cols = 5
   rows = (len(sheet_frames) + cols - 1) // cols
   crop_h = height - bar
   sheet = Image.new("RGB", (cols * crop_w, bar + rows * crop_h))
