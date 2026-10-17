@@ -11,7 +11,61 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import ContactSensor, TerrainHeightSensor
+from mjlab.tasks.velocity.mdp.velocity_command import UniformVelocityCommand, UniformVelocityCommandCfg
 from mjlab.utils.lab_api.math import quat_apply, quat_apply_inverse
+
+# ------------------------------------------------------------------ velocity commands
+
+
+@dataclass(kw_only=True)
+class MixedVelocityCommandCfg(UniformVelocityCommandCfg):
+  """Uniform velocity commands, plus a share of slow walks and turns in place.
+
+  Uniform sampling over a sprint-sized range leaves little practice where a browser
+  robot spends its time: ambling up to the cursor and pivoting toward it. Of the
+  resampled envs, ``rel_slow_envs`` walk forward at ``slow_lin_vel_x`` while turning
+  within ``slow_ang_vel_z``, and ``rel_turn_envs`` turn in place at a yaw rate whose
+  magnitude is in ``turn_ang_vel_z`` (with a little forward drift). Neither kind
+  steers by heading."""
+
+  rel_slow_envs: float = 0.0
+  slow_lin_vel_x: tuple[float, float] = (0.1, 0.6)
+  slow_ang_vel_z: tuple[float, float] = (-0.8, 0.8)
+  rel_turn_envs: float = 0.0
+  turn_ang_vel_z: tuple[float, float] = (0.4, 1.5)
+  turn_lin_vel_x: tuple[float, float] = (-0.05, 0.1)
+
+  def build(self, env: ManagerBasedRlEnv) -> MixedVelocityCommand:
+    return MixedVelocityCommand(self, env)
+
+
+class MixedVelocityCommand(UniformVelocityCommand):
+  cfg: MixedVelocityCommandCfg
+
+  def _resample_command(self, env_ids: torch.Tensor) -> None:
+    super()._resample_command(env_ids)
+    c = self.cfg
+    # Shares of the envs that aren't standing.
+    roll = torch.rand(len(env_ids), device=self.device)
+    roll[self.is_standing_env[env_ids]] = 2.0
+    slow = env_ids[roll < c.rel_slow_envs]
+    turn = env_ids[(roll >= c.rel_slow_envs) & (roll < c.rel_slow_envs + c.rel_turn_envs)]
+    u = lambda n, lo, hi: torch.empty(n, device=self.device).uniform_(lo, hi)  # noqa: E731
+    if len(slow):
+      self.vel_command_b[slow, 0] = u(len(slow), *c.slow_lin_vel_x)
+      self.vel_command_b[slow, 1] = 0.0
+      self.vel_command_b[slow, 2] = u(len(slow), *c.slow_ang_vel_z)
+    if len(turn):
+      sign = torch.where(torch.rand(len(turn), device=self.device) < 0.5, -1.0, 1.0)
+      self.vel_command_b[turn, 0] = u(len(turn), *c.turn_lin_vel_x)
+      self.vel_command_b[turn, 1] = 0.0
+      self.vel_command_b[turn, 2] = sign * u(len(turn), *c.turn_ang_vel_z)
+    both = torch.cat([slow, turn])
+    if len(both):
+      self.is_heading_env[both] = False
+      self.is_forward_env[both] = False
+      self.is_world_env[both] = False
+      self.vel_command_w[both] = self.vel_command_b[both]
 
 # ------------------------------------------------------------------ gait clock (phase)
 
@@ -110,6 +164,15 @@ class MotionClockCommandCfg(GaitClockCommandCfg):
 
   gaitlib_file: str
   period_jitter: float = 0.08
+  turn_stride: float = 1.0
+  """Stride amplitude (fraction of the slowest row) when turning in place; it grows to
+  the full stride as the linear speed reaches the slowest row. 1.0 = the original
+  lookup, where a turn in place got a full forward stride to track."""
+  slow_stride: bool = False
+  """Below the slowest row keep a real, shorter stride instead of blending linearly to
+  standing: amplitude sqrt(speed / slowest), the way human step length shrinks, faded
+  in between 15 % and 30 % of the slowest row's speed. Without it a slow walk or a
+  gentle turn tracks an all-but-standing pose, and the policy learns to stand."""
 
   def build(self, env: ManagerBasedRlEnv) -> MotionClockCommand:
     return MotionClockCommand(self, env)
@@ -167,8 +230,17 @@ def motion_reference(lib: dict, twist: torch.Tensor, phase: torch.Tensor) -> dic
     r1 = (1 - b) * t[i + 1, k] + b * t[i + 1, k1]
     return (1 - a1) * r0 + a1 * r1
 
-  u = torch.clamp((speed - 0.25 * sp[0]) / (0.75 * sp[0]), 0.0, 1.0)
-  w = u * u * (3.0 - 2.0 * u)
+  if lib.get("slow_stride", 0.0):
+    on = torch.clamp((speed - 0.15 * sp[0]) / (0.15 * sp[0]), 0.0, 1.0)
+    w = on * on * (3.0 - 2.0 * on) * torch.sqrt(torch.clamp(speed / sp[0], 0.0, 1.0))
+  else:
+    u = torch.clamp((speed - 0.25 * sp[0]) / (0.75 * sp[0]), 0.0, 1.0)
+    w = u * u * (3.0 - 2.0 * u)
+  m0 = float(lib.get("turn_stride", 1.0))
+  if m0 < 1.0:
+    # Stepping in place to turn: a shorter stride until the robot is actually walking.
+    ul = torch.clamp(torch.norm(twist[:, :2], dim=1) / sp[0], 0.0, 1.0)
+    w = w * (m0 + (1.0 - m0) * ul * ul * (3.0 - 2.0 * ul))
   stand = lib["stand_q"]
   direction = torch.where(backward, -1.0, 1.0)
   return {
@@ -189,6 +261,8 @@ class MotionClockCommand(GaitClockCommand):
     super().__init__(cfg, env)
     robot: Entity = env.scene["robot"]
     self.lib = load_gaitlib(cfg.gaitlib_file, robot.joint_names, self.device)
+    self.lib["turn_stride"] = cfg.turn_stride
+    self.lib["slow_stride"] = float(cfg.slow_stride)
     J = len(robot.joint_names)
     self.ref_q = self.lib["stand_q"].expand(self.num_envs, J).clone()
     self.ref_grav = torch.zeros(self.num_envs, 2, device=self.device)
@@ -251,14 +325,30 @@ def ref_gravity(env: ManagerBasedRlEnv, command_name: str, std: float) -> torch.
 
 
 def ref_yaw_rate(
-  env: ManagerBasedRlEnv, command_name: str, twist_name: str, std: float
+  env: ManagerBasedRlEnv, command_name: str, twist_name: str, std: float, std_rel: float = 0.0
 ) -> torch.Tensor:
-  """Yaw-rate tracking with the mocap's stride-locked pelvis yaw on top."""
+  """Yaw-rate tracking with the mocap's stride-locked pelvis yaw on top. The std is
+  ``std + std_rel * |w_z|``: with ``std_rel`` a small std makes slow turns count."""
   robot: Entity = env.scene["robot"]
   twist = env.command_manager.get_command(twist_name)
   assert twist is not None
   target = twist[:, 2] + _motion(env, command_name).ref_yaw_rate
-  return torch.exp(-torch.square(robot.data.root_link_ang_vel_b[:, 2] - target) / std**2)
+  s = std + std_rel * torch.abs(twist[:, 2])
+  return torch.exp(-torch.square(robot.data.root_link_ang_vel_b[:, 2] - target) / s**2)
+
+
+def track_lin_vel_rel(
+  env: ManagerBasedRlEnv, command_name: str, std: float, std_rel: float
+) -> torch.Tensor:
+  """``track_linear_velocity`` with a std of ``std + std_rel * |v_cmd|``, so creeping
+  at half the asked speed costs as much at 0.15 m/s as at a run."""
+  robot: Entity = env.scene["robot"]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  actual = robot.data.root_link_lin_vel_b
+  err = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1) + torch.square(actual[:, 2])
+  s = std + std_rel * torch.norm(command[:, :2], dim=1)
+  return torch.exp(-err / s**2)
 
 
 def _clock(env: ManagerBasedRlEnv, name: str) -> GaitClockCommand:

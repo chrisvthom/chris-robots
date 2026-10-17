@@ -42,6 +42,7 @@ def make_flat_env_cfg(
   amp_hybrid: bool = False,
   mimic: bool = False,
   rough: bool = False,
+  agile: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """``amp=True`` swaps the hand-designed animation layer (gait clock, arm swing,
   torso sway, bob, pose prior, lean) for an adversarial motion prior trained on
@@ -50,7 +51,9 @@ def make_flat_env_cfg(
   ``mimic=True`` replaces the animation layer with tracking of a mocap gait library
   (see ``chris_robots.tools.gaitlib``): the policy observes the reference pose for
   the commanded speed and stride phase and is rewarded for matching it. ``rough=True``
-  (with ``mimic``) walks it on gentle, blind-walkable uneven ground instead of a plane."""
+  (with ``mimic``) walks it on gentle, blind-walkable uneven ground instead of a plane.
+  ``agile=True`` (with ``mimic``) practises what the website asks for most: slow walks
+  and turns in place, tracked tighter (``_agile``)."""
   cfg = make_velocity_env_cfg()
 
   # ---- sim settings (flat terrain is cheap) ----------------------------------
@@ -168,7 +171,10 @@ def make_flat_env_cfg(
   if mimic:
     if rough:
       _gentle_terrain(cfg, robot)
-    return _finish_mimic(cfg, robot, play)
+    cfg = _finish_mimic(cfg, robot, play)
+    if agile:
+      _agile(cfg, robot, play)
+    return cfg
   if amp:
     return _finish_amp(cfg, robot, play)
 
@@ -491,6 +497,42 @@ def _finish_mimic(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> Man
     {"step": 400 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
   ]
   return _apply_play(cfg, robot, play)
+
+
+def _agile(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> None:
+  """Slow walking and turning, for a mimic policy fine-tuned from a full-range one.
+
+  The full-range recipe tracks speed with a std of half a walk and turns with
+  sqrt(0.5) rad/s, so creeping at 0.3 m/s or turning at half the asked rate costs
+  little, and uniform commands up to a sprint rarely ask for either. Here 30 % of the
+  moving envs amble (up to 0.9 walk speeds, turning a bit) and 15 % turn in place, a
+  turn in place tracks a short stepping stride instead of a full forward one
+  (``MotionClockCommandCfg.turn_stride``), slow commands keep a real, shorter stride
+  (``slow_stride``), and the tracking stds grow with the command, so missing a slow
+  walk or a gentle turn costs as much as missing a run."""
+  v = robot.walk_vel
+  w = robot.max_ang_vel
+  twist = cfg.commands["twist"]
+  assert isinstance(twist, UniformVelocityCommandCfg)
+  fields = {f: getattr(twist, f) for f in twist.__dataclass_fields__}
+  cfg.commands["twist"] = chris_mdp.MixedVelocityCommandCfg(
+    **fields,
+    rel_slow_envs=0.0 if play else 0.3,
+    slow_lin_vel_x=(0.12 * v, 0.9 * v),
+    slow_ang_vel_z=(-0.6 * w, 0.6 * w),
+    rel_turn_envs=0.0 if play else 0.15,
+    turn_ang_vel_z=(0.3 * w, w),
+    turn_lin_vel_x=(-0.05 * v, 0.1 * v),
+  )
+  clock = cfg.commands["gait_clock"]
+  assert isinstance(clock, chris_mdp.MotionClockCommandCfg)
+  clock.turn_stride = 0.45
+  clock.slow_stride = True
+  track = cfg.rewards["track_linear_velocity"]
+  track.func = chris_mdp.track_lin_vel_rel
+  track.params = {"command_name": track.params["command_name"], "std": 0.06 * v, "std_rel": 0.2}
+  cfg.rewards["ref_yaw_rate"].params.update(std=0.15, std_rel=0.2)
+  cfg.rewards["ref_yaw_rate"].weight = 2.5
 
 
 def _finish_amp(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:

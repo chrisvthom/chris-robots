@@ -36,6 +36,7 @@ def register_tasks() -> list[str]:
     # "<task>-SymAmp" keeps the animation layer and adds the prior as a style nudge.
     # "<task>-Mimic" tracks a mocap gait library (needs ``uv run gaitlib <robot>``).
     # "<task>-MimicRough" is the same on gentle uneven ground.
+    # "<task>-MimicAgile" fine-tunes a mimic policy for slow walks and turns in place.
     variants = (
       (robot.task_id, False, {}),
       (f"{robot.task_id}-Sym", True, {}),
@@ -43,6 +44,7 @@ def register_tasks() -> list[str]:
       (f"{robot.task_id}-SymAmp", True, {"amp_hybrid": True}),
       (f"{robot.task_id}-Mimic", True, {"mimic": True}),
       (f"{robot.task_id}-MimicRough", True, {"mimic": True, "rough": True}),
+      (f"{robot.task_id}-MimicAgile", True, {"mimic": True, "agile": True}),
     )
     for task_id, symmetry, kw in variants:
       if task_id in existing:
