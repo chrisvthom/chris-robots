@@ -183,6 +183,7 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
     "actions": n,
     "command": 3,
     "gait_clock": 2,
+    "motion_ref": n,
   }
   layout, offset = [], 0
   for name, scale, hist, clip in zip(
@@ -284,6 +285,14 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
         "whatever clock it is given, so a runtime may vary the scale for gait variety."
       ),
     }
+  if any(t["name"] == "motion_ref" for t in layout):
+    from chris_robots.tools.mocap import DATA_DIR
+
+    out["motion_ref"] = {
+      "gaitlib": str(DATA_DIR / f"{robot.name}_gaitlib.npz"),
+      "standing_threshold": 0.1 * v,
+      "note": "period, duty and reference pose come from the gait library (mdp.motion_reference)",
+    }
   return out
 
 
@@ -326,9 +335,34 @@ class BundleRunner:
     mujoco.mj_forward(self.model, self.data)
     self.last_action = np.zeros_like(self.default)
     self.phase = 0.0
+    self.lib = None
+    self.ref_q = self.default.copy()
+    mr = self.cfg.get("motion_ref")
+    if mr is not None:
+      from chris_robots.mdp import load_gaitlib
+
+      self.lib = load_gaitlib(mr["gaitlib"], self.cfg["joints"]["names"], "cpu")
+      self.ref_q = self.lib["stand_q"].numpy().copy()
+
+  def _motion_ref(self, command: np.ndarray) -> dict:
+    import torch
+
+    from chris_robots.mdp import motion_reference
+
+    twist = torch.as_tensor(command, dtype=torch.float32)[None]
+    ref = motion_reference(self.lib, twist, torch.tensor([self.phase], dtype=torch.float32))
+    return {k: v[0].numpy() for k, v in ref.items()}
 
   def advance_clock(self, command: np.ndarray) -> None:
-    """Gait clock, mirrored from chris_robots.mdp.GaitClockCommand."""
+    """Gait clock, mirrored from chris_robots.mdp.GaitClockCommand / MotionClockCommand."""
+    if self.lib is not None:
+      ref = self._motion_ref(command)
+      if ref["speed"] > self.cfg["motion_ref"]["standing_threshold"]:
+        dt = self.cfg["sim"]["control_dt"]
+        self.phase = (self.phase + dt / float(ref["period"])) % 1.0
+        ref = self._motion_ref(command)
+      self.ref_q = ref["q"]
+      return
     gc = self.cfg.get("gait_clock")
     if gc is None:
       return
@@ -356,6 +390,7 @@ class BundleRunner:
       "gait_clock": np.array(
         [np.sin(2 * np.pi * self.phase), np.cos(2 * np.pi * self.phase)], dtype=np.float32
       ),
+      "motion_ref": self.ref_q - self.default,
     }
     obs = np.zeros(self.cfg["policy"]["obs_dim"], dtype=np.float32)
     for term in self.cfg["policy"]["observation_layout"]:

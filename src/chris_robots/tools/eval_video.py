@@ -74,6 +74,8 @@ def task_for_run(robot: RobotDef, run_dir: Path) -> str:
   """Runs named ``*_amp*`` were trained on the ``-Amp`` task (different observations);
   ``*_hybrid*`` on ``-SymAmp`` (same observations as the plain task)."""
   name = run_dir.name.lower()
+  if "mimic" in name:
+    return f"{robot.task_id}-MimicRough" if "rough" in name else f"{robot.task_id}-Mimic"
   if "hybrid" in name:
     return f"{robot.task_id}-SymAmp"
   return f"{robot.task_id}-Amp" if "amp" in name else robot.task_id

@@ -14,6 +14,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg, mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
@@ -21,8 +22,12 @@ from mjlab.sensor import (
   RingPatternCfg,
   TerrainHeightSensorCfg,
 )
+from mjlab.tasks.velocity import mdp as velocity_mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
+from mjlab.terrains import TerrainEntityCfg
+from mjlab.terrains import config as terrains
+from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 
 from chris_robots import mdp as chris_mdp
 from chris_robots.robots.base import RobotDef
@@ -31,12 +36,21 @@ STEPS_PER_ITER = 24  # rsl-rl num_steps_per_env
 
 
 def make_flat_env_cfg(
-  robot: RobotDef, play: bool = False, amp: bool = False, amp_hybrid: bool = False
+  robot: RobotDef,
+  play: bool = False,
+  amp: bool = False,
+  amp_hybrid: bool = False,
+  mimic: bool = False,
+  rough: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """``amp=True`` swaps the hand-designed animation layer (gait clock, arm swing,
   torso sway, bob, pose prior, lean) for an adversarial motion prior trained on
   retargeted human mocap (see ``chris_robots.amp``). ``amp_hybrid=True`` keeps the
-  animation layer and *adds* the motion prior as a lower-weight style nudge."""
+  animation layer and *adds* the motion prior as a lower-weight style nudge.
+  ``mimic=True`` replaces the animation layer with tracking of a mocap gait library
+  (see ``chris_robots.tools.gaitlib``): the policy observes the reference pose for
+  the commanded speed and stride phase and is rewarded for matching it. ``rough=True``
+  (with ``mimic``) walks it on gentle, blind-walkable uneven ground instead of a plane."""
   cfg = make_velocity_env_cfg()
 
   # ---- sim settings (flat terrain is cheap) ----------------------------------
@@ -151,6 +165,10 @@ def make_flat_env_cfg(
   )
   cfg.rewards["action_rate_l2"].weight = robot.action_rate_weight
 
+  if mimic:
+    if rough:
+      _gentle_terrain(cfg, robot)
+    return _finish_mimic(cfg, robot, play)
   if amp:
     return _finish_amp(cfg, robot, play)
 
@@ -319,6 +337,150 @@ def _amp_term(robot: RobotDef, play: bool, weight: float) -> RewardTermCfg:
       "train": not play,
     },
   )
+
+
+_ROLE_WEIGHTS = {
+  "hip_pitch": 1.0,
+  "knee": 1.0,
+  "hip_roll": 1.0,
+  "ankle_pitch": 0.6,
+  "ankle_roll": 0.4,
+  "hip_yaw": 0.4,
+  "shoulder_pitch": 1.0,
+  "elbow": 0.6,
+  "shoulder_roll": 0.5,
+  "shoulder_yaw": 0.3,
+}
+
+
+def mimic_joint_weights(robot: RobotDef) -> tuple[float, ...]:
+  """Per-joint weight of the pose-tracking reward, by anatomical role (model order)."""
+  from chris_robots.tools.mocap import canonical_role
+
+  out = []
+  for name in robot.joint_names:
+    key = canonical_role(name)
+    out.append(_ROLE_WEIGHTS.get(key[1], 0.2) if key else 0.2)
+  return tuple(out)
+
+
+def _gentle_terrain(cfg: ManagerBasedRlEnvCfg, robot: RobotDef) -> None:
+  """Uneven ground a blind policy can walk, every size scaled to the robot: long
+  waves, a little random roughness, mild (<7 deg) pyramids, and flat patches. Covers
+  the website's bumps (lib/sim/terrain.ts: about +-4% of standing height)."""
+  h = robot.standing_height
+  hs = min(0.1, max(0.03, 0.08 * h))  # heightfield cell
+  common = {"border_width": hs, "horizontal_scale": hs, "vertical_scale": 0.0025 * h}
+  cfg.scene.terrain = TerrainEntityCfg(
+    terrain_type="generator",
+    terrain_generator=TerrainGeneratorCfg(
+      size=(8.0, 8.0),
+      border_width=10.0,
+      num_rows=10,
+      num_cols=10,
+      sub_terrains={
+        "flat": terrains.flat(proportion=0.25),
+        "waves": terrains.wave_terrain(
+          proportion=0.25,
+          amplitude_range=(0.01 * h, 0.06 * h),
+          num_waves=max(2, round(8.0 / (2.5 * h))),
+          **common,
+        ),
+        "rough": terrains.random_rough(
+          proportion=0.2,
+          noise_range=(0.0, 0.025 * h),
+          noise_step=0.0025 * h,
+          downsampled_scale=max(hs, 0.25 * h),
+          **common,
+        ),
+        "slope": terrains.hf_pyramid_slope(proportion=0.15, slope_range=(0.0, 0.12), **common),
+        "slope_inv": terrains.hf_pyramid_slope_inv(
+          proportion=0.15, slope_range=(0.0, 0.12), **common
+        ),
+      },
+    ),
+  )
+  cfg.terminations["out_of_terrain_bounds"] = TerminationTermCfg(
+    func=velocity_mdp.out_of_terrain_bounds, time_out=True
+  )
+
+
+def _finish_mimic(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:
+  """Mocap-tracking variant: velocity tracking + gait-library pose/lean/sway tracking."""
+  from chris_robots.tools.mocap import DATA_DIR
+
+  v = robot.walk_vel
+  run = robot.max_lin_vel
+  w = robot.max_ang_vel
+  for name in ("pose", "lean", "foot_clearance", "foot_swing_height", "air_time"):
+    cfg.rewards.pop(name, None)
+  cfg.commands["gait_clock"] = chris_mdp.MotionClockCommandCfg(
+    gaitlib_file=str(DATA_DIR / f"{robot.name}_gaitlib.npz"),
+    standing_threshold=0.1 * v,
+  )
+  for group in ("actor", "critic"):
+    cfg.observations[group].terms["gait_clock"] = ObservationTermCfg(
+      func=mdp.generated_commands, params={"command_name": "gait_clock"}
+    )
+    cfg.observations[group].terms["motion_ref"] = ObservationTermCfg(
+      func=chris_mdp.motion_ref, params={"command_name": "gait_clock"}
+    )
+  cfg.rewards["ref_joint_pos"] = RewardTermCfg(
+    func=chris_mdp.ref_joint_pos,
+    weight=4.0,
+    params={"command_name": "gait_clock", "weights": mimic_joint_weights(robot), "std": 0.25},
+  )
+  cfg.rewards["ref_gravity"] = RewardTermCfg(
+    func=chris_mdp.ref_gravity, weight=1.0, params={"command_name": "gait_clock", "std": 0.06}
+  )
+  cfg.rewards.pop("track_angular_velocity")
+  cfg.rewards["ref_yaw_rate"] = RewardTermCfg(
+    func=chris_mdp.ref_yaw_rate,
+    weight=1.5,
+    params={"command_name": "gait_clock", "twist_name": "twist", "std": math.sqrt(0.5)},
+  )
+  left_index = robot.foot_order.index("left")
+  cfg.rewards["gait_schedule"] = RewardTermCfg(
+    func=chris_mdp.gait_contact_schedule,
+    weight=1.5,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "clock_name": "gait_clock",
+      "left_index": left_index,
+      "margin": 0.05,
+    },
+  )
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = robot.foot_sites
+  cfg.rewards["foot_slip"].weight = -0.5
+  for name in ("foot_slip", "soft_landing"):
+    cfg.rewards[name].params["command_threshold"] = 0.1 * v
+  left_sign, separation = robot.foot_lateral()
+  cfg.rewards["feet_apart"] = RewardTermCfg(
+    func=chris_mdp.feet_apart,
+    weight=-1.0,
+    params={
+      "site_names": robot.foot_sites,
+      "left_index": left_index,
+      "left_sign": left_sign,
+      "separation_m": separation,
+      "min_frac": 0.6,
+    },
+  )
+  cfg.rewards["foot_flat"] = RewardTermCfg(
+    func=chris_mdp.foot_flat,
+    weight=-1.0,
+    params={
+      "site_names": robot.foot_sites,
+      "up_local": robot.foot_up_axes(),
+      "sensor_name": "feet_ground_contact",
+      "dead_zone_deg": 5.0,
+    },
+  )
+  cfg.curriculum["command_vel"].params["velocity_stages"] = [
+    {"step": 0, "lin_vel_x": (-v, 0.5 * run), "ang_vel_z": (-w, w)},
+    {"step": 400 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
+  ]
+  return _apply_play(cfg, robot, play)
 
 
 def _finish_amp(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:

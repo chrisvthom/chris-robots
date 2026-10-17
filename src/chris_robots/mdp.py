@@ -97,6 +97,170 @@ class GaitClockCommand(CommandTerm):
     return torch.remainder(self.phase.unsqueeze(1) + offsets, 1.0)
 
 
+@dataclass(kw_only=True)
+class MotionClockCommandCfg(GaitClockCommandCfg):
+  """Gait clock whose period, duty and a full-body reference pose come from a mocap
+  gait library (``uv run gaitlib``), looked up by commanded speed and phase.
+
+  Exposes ``ref_q`` [B, J] (entity joint order), ``ref_grav`` [B, 2] (projected
+  gravity x/y) and ``ref_yaw_rate`` [B] (stride-locked pelvis yaw rate). Backward
+  commands play the stride in reverse. Below the slowest table row the reference
+  blends to the standing pose. Mirrors ``gaitlib.sample`` exactly.
+  """
+
+  gaitlib_file: str
+  period_jitter: float = 0.08
+
+  def build(self, env: ManagerBasedRlEnv) -> MotionClockCommand:
+    return MotionClockCommand(self, env)
+
+
+def load_gaitlib(path: str, joint_names: list[str] | tuple[str, ...], device) -> dict:
+  """Gait-library tensors with joints reordered to ``joint_names``."""
+  import numpy as np
+
+  lib = np.load(path)
+  names = [str(n) for n in lib["joint_names"]]
+  order = [names.index(n) for n in joint_names]
+  f = lambda x: torch.as_tensor(np.asarray(x), dtype=torch.float32, device=device)  # noqa: E731
+  yaw = lib["yaw"]  # [S, P]
+  n_phase = yaw.shape[1]
+  return {
+    "speeds": f(lib["speeds"]),
+    "period": f(lib["period"]),
+    "duty": f(lib["duty"]),
+    "q": f(lib["q"][..., order]),  # [S, P, J]
+    "grav": f(lib["grav"]),  # [S, P, 2]
+    # d(yaw)/d(phase), central difference on the periodic table
+    "dyaw": f((np.roll(yaw, -1, axis=1) - np.roll(yaw, 1, axis=1)) * n_phase / 2.0)[..., None],
+    "stand_q": f(lib["stand_q"][order]),
+  }
+
+
+def motion_reference(lib: dict, twist: torch.Tensor, phase: torch.Tensor) -> dict:
+  """Gait-library lookup for commands ``twist`` [B, 3] at clock phase [B].
+
+  Speed s = |v_xy| + 0.3 |w_z| picks (and linearly blends) two table rows; phase
+  picks (and blends) two samples. Backward commands play the stride in reverse via
+  psi = (duty - phase) mod 1, which keeps each foot's stance window where the clock
+  schedule puts it. Below the slowest row the pose blends to standing (weight w).
+  The browser (lib/sim/gait.ts) implements exactly this.
+  """
+  sp = lib["speeds"]
+  speed = torch.norm(twist[:, :2], dim=1) + 0.3 * torch.abs(twist[:, 2])
+  s = torch.clamp(speed, float(sp[0]), float(sp[-1]))
+  i = torch.clamp(torch.searchsorted(sp, s) - 1, 0, len(sp) - 2)
+  a = (s - sp[i]) / (sp[i + 1] - sp[i])
+  period = torch.lerp(lib["period"][i], lib["period"][i + 1], a)
+  duty = torch.lerp(lib["duty"][i], lib["duty"][i + 1], a)
+  backward = twist[:, 0] < -0.5 * torch.norm(twist[:, :2], dim=1)
+  psi = torch.where(backward, torch.remainder(duty - phase, 1.0), phase)
+  n_phase = lib["q"].shape[1]
+  x = psi * n_phase
+  k = torch.floor(x).long() % n_phase
+  k1 = (k + 1) % n_phase
+  b = (x - torch.floor(x)).unsqueeze(1)
+  a1 = a.unsqueeze(1)
+
+  def at(t: torch.Tensor) -> torch.Tensor:  # t [S, P, D] -> [B, D]
+    r0 = (1 - b) * t[i, k] + b * t[i, k1]
+    r1 = (1 - b) * t[i + 1, k] + b * t[i + 1, k1]
+    return (1 - a1) * r0 + a1 * r1
+
+  u = torch.clamp((speed - 0.25 * sp[0]) / (0.75 * sp[0]), 0.0, 1.0)
+  w = u * u * (3.0 - 2.0 * u)
+  stand = lib["stand_q"]
+  direction = torch.where(backward, -1.0, 1.0)
+  return {
+    "speed": speed,
+    "period": period,
+    "duty": duty,
+    "weight": w,
+    "q": stand + w.unsqueeze(1) * (at(lib["q"]) - stand),
+    "grav": w.unsqueeze(1) * at(lib["grav"]),
+    "dyaw_dphase": w * direction * at(lib["dyaw"])[:, 0],
+  }
+
+
+class MotionClockCommand(GaitClockCommand):
+  cfg: MotionClockCommandCfg
+
+  def __init__(self, cfg: MotionClockCommandCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+    robot: Entity = env.scene["robot"]
+    self.lib = load_gaitlib(cfg.gaitlib_file, robot.joint_names, self.device)
+    J = len(robot.joint_names)
+    self.ref_q = self.lib["stand_q"].expand(self.num_envs, J).clone()
+    self.ref_grav = torch.zeros(self.num_envs, 2, device=self.device)
+    self.ref_yaw_rate = torch.zeros(self.num_envs, device=self.device)
+
+  def _update_command(self, env_ids: torch.Tensor | None) -> None:
+    twist = self._env_ref.command_manager.get_command(self.cfg.twist_name)
+    assert twist is not None
+    ref = motion_reference(self.lib, twist, self.phase)
+    self.period = ref["period"] * self.period_scale
+    self.duty = ref["duty"]
+    self.moving = ref["speed"] > self.cfg.standing_threshold
+    if env_ids is None:
+      dt = self._env_ref.step_dt
+      self.phase = torch.where(
+        self.moving, torch.remainder(self.phase + dt / self.period, 1.0), self.phase
+      )
+      ref = motion_reference(self.lib, twist, self.phase)
+    two_pi_phi = 2.0 * math.pi * self.phase
+    self._command[:, 0] = torch.sin(two_pi_phi)
+    self._command[:, 1] = torch.cos(two_pi_phi)
+    self.ref_q = ref["q"]
+    self.ref_grav = ref["grav"]
+    self.ref_yaw_rate = ref["dyaw_dphase"] / self.period
+
+
+def _motion(env: ManagerBasedRlEnv, name: str) -> MotionClockCommand:
+  term = env.command_manager.get_term(name)
+  assert isinstance(term, MotionClockCommand)
+  return term
+
+
+def motion_ref(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Observation: the reference pose relative to the default pose [B, J]."""
+  robot: Entity = env.scene["robot"]
+  return _motion(env, command_name).ref_q - robot.data.default_joint_pos
+
+
+class ref_joint_pos:
+  """exp(-sum_j w_j (q_j - ref_j)^2 / sum_j w_j / std^2): track the mocap pose."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.w = torch.tensor(cfg.params["weights"], device=env.device, dtype=torch.float32)
+
+  def __call__(
+    self, env: ManagerBasedRlEnv, command_name: str, weights: tuple[float, ...], std: float
+  ) -> torch.Tensor:
+    del weights
+    robot: Entity = env.scene["robot"]
+    err = torch.square(robot.data.joint_pos - _motion(env, command_name).ref_q)
+    return torch.exp(-(err * self.w).sum(dim=1) / self.w.sum() / std**2)
+
+
+def ref_gravity(env: ManagerBasedRlEnv, command_name: str, std: float) -> torch.Tensor:
+  """Track the mocap torso lean and side sway through projected gravity x/y."""
+  robot: Entity = env.scene["robot"]
+  g = robot.data.projected_gravity_b[:, :2]
+  err = torch.sum(torch.square(g - _motion(env, command_name).ref_grav), dim=1)
+  return torch.exp(-err / std**2)
+
+
+def ref_yaw_rate(
+  env: ManagerBasedRlEnv, command_name: str, twist_name: str, std: float
+) -> torch.Tensor:
+  """Yaw-rate tracking with the mocap's stride-locked pelvis yaw on top."""
+  robot: Entity = env.scene["robot"]
+  twist = env.command_manager.get_command(twist_name)
+  assert twist is not None
+  target = twist[:, 2] + _motion(env, command_name).ref_yaw_rate
+  return torch.exp(-torch.square(robot.data.root_link_ang_vel_b[:, 2] - target) / std**2)
+
+
 def _clock(env: ManagerBasedRlEnv, name: str) -> GaitClockCommand:
   term = env.command_manager.get_term(name)
   assert isinstance(term, GaitClockCommand)

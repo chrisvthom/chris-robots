@@ -34,19 +34,23 @@ def register_tasks() -> list[str]:
     # "<task>-Amp" replaces the hand-made animation layer with an adversarial motion
     # prior from retargeted mocap (needs ``uv run mocap <robot>`` first).
     # "<task>-SymAmp" keeps the animation layer and adds the prior as a style nudge.
+    # "<task>-Mimic" tracks a mocap gait library (needs ``uv run gaitlib <robot>``).
+    # "<task>-MimicRough" is the same on gentle uneven ground.
     variants = (
-      (robot.task_id, False, False, False),
-      (f"{robot.task_id}-Sym", True, False, False),
-      (f"{robot.task_id}-Amp", True, True, False),
-      (f"{robot.task_id}-SymAmp", True, False, True),
+      (robot.task_id, False, {}),
+      (f"{robot.task_id}-Sym", True, {}),
+      (f"{robot.task_id}-Amp", True, {"amp": True}),
+      (f"{robot.task_id}-SymAmp", True, {"amp_hybrid": True}),
+      (f"{robot.task_id}-Mimic", True, {"mimic": True}),
+      (f"{robot.task_id}-MimicRough", True, {"mimic": True, "rough": True}),
     )
-    for task_id, symmetry, amp, hybrid in variants:
+    for task_id, symmetry, kw in variants:
       if task_id in existing:
         continue
       register_mjlab_task(
         task_id=task_id,
-        env_cfg=make_flat_env_cfg(robot, amp=amp, amp_hybrid=hybrid),
-        play_env_cfg=make_flat_env_cfg(robot, play=True, amp=amp, amp_hybrid=hybrid),
+        env_cfg=make_flat_env_cfg(robot, **kw),
+        play_env_cfg=make_flat_env_cfg(robot, play=True, **kw),
         rl_cfg=make_ppo_runner_cfg(robot, symmetry=symmetry),
         runner_cls=VelocityOnPolicyRunner,
       )

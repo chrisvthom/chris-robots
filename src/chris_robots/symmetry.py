@@ -168,12 +168,12 @@ def build_spec(env) -> MirrorSpec:
           raise ValueError(f"term {name} has dim {d}, expected 2 feet x {len(per)}")
         p = np.concatenate([idx[len(per) :], idx[: len(per)]])
         sgn = np.tile(per, 2)
-      elif name in ("joint_pos", "joint_vel"):
+      elif name in ("joint_pos", "joint_vel", "motion_ref"):
         if d != len(joint_names):
           raise ValueError(f"term {name} has dim {d}, expected {len(joint_names)} joints")
         p = idx[jperm]
         sgn = jsign
-        if name == "joint_pos":
+        if name in ("joint_pos", "motion_ref"):
           off = joint_offset
       elif name == "actions":
         if d != len(joint_names):
