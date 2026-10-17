@@ -249,7 +249,11 @@ def _autocorr_period(x: np.ndarray, dt: float, tmin: float, tmax: float) -> floa
 
 
 def analyze(
-  trace: GaitTrace, swing_target_m: float, speed_cmd: float, turning: bool = False
+  trace: GaitTrace,
+  swing_target_m: float,
+  speed_cmd: float,
+  turning: bool = False,
+  lateral: bool = False,
 ) -> GaitMetrics:
   dt = trace.dt
   n = len(trace.t)
@@ -351,7 +355,7 @@ def analyze(
       ratio = strides[0] / strides[1]
       if ratio < 0.7 or ratio > 1.4:
         reasons.append(f"asymmetric strides ({ratio:.2f})")
-    if sym is not None and sym < 0.5:
+    if sym is not None and sym < 0.5 and not lateral:  # sidestepping is hip-roll driven
       reasons.append(f"L/R hip trajectories dissimilar (sym {sym:.2f})")
   if trace.fell_at is not None:
     verdict = "FELL"

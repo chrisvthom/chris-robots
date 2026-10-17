@@ -91,7 +91,9 @@ DYNAMIC_POSTURE: dict[str, tuple[float, float]] = {
   r".*gripper.*": (0.05, 0.05),
 }
 _FALLBACK_POSTURE = (0.3, 0.5)
-STANDING_POSTURE_STD = 0.05
+# Loose enough that the Gaussian pose reward still has a gradient when an arm is left
+# 0.5 rad off after a walk (0.05 saturated to ~0 and the policy ignored it).
+STANDING_POSTURE_STD = 0.15
 
 
 def dynamic_posture(

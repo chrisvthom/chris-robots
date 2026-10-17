@@ -241,11 +241,10 @@ class arm_swing:
       fwd_forearm = -self.el_sign * rel[:, self.el_ids]
       fwd_same_arm = -self.el_sh_sign * rel[:, self.el_sh_ids]
       err = torch.cat([err, fwd_forearm - elbow_gain * fwd_same_arm], dim=1)
-    reward = torch.exp(-torch.mean(err**2, dim=1) / std**2)
-    command = env.command_manager.get_command(command_name)
-    assert command is not None
-    moving = (torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])) > command_threshold
-    return reward * moving.float()
+    # Always on: when standing the legs are at default, so the target is "arms at
+    # default" too, which stops the arms freezing mid-swing after a stop.
+    del command_name, command_threshold
+    return torch.exp(-torch.mean(err**2, dim=1) / std**2)
 
 
 class joint_deviation_l2:
