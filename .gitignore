@@ -20,3 +20,4 @@ outputs/
 
 # Eval videos (large)
 media/evals/
+data/

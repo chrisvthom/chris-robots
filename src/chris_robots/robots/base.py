@@ -169,6 +169,8 @@ class RobotDef:
   """Vertical bob amplitude as a fraction of standing height (humans ~3%; exaggerated)."""
   action_rate_weight: float = -0.05
   """Penalty on action change per step; stronger for twitchy little servos."""
+  amp_weight: float = 1.5
+  """Weight of the adversarial style reward in the ``-Amp`` task variant."""
   """Cosmetic: reward each shoulder pitch for following the opposite hip pitch with
   this gain (0 disables the term)."""
   lean_at_run: float = 0.2

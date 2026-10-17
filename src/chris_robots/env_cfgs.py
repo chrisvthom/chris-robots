@@ -30,7 +30,12 @@ from chris_robots.robots.base import RobotDef
 STEPS_PER_ITER = 24  # rsl-rl num_steps_per_env
 
 
-def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvCfg:
+def make_flat_env_cfg(
+  robot: RobotDef, play: bool = False, amp: bool = False
+) -> ManagerBasedRlEnvCfg:
+  """``amp=True`` swaps the hand-designed animation layer (gait clock, arm swing,
+  torso sway, bob, pose prior, lean) for an adversarial motion prior trained on
+  retargeted human mocap (see ``chris_robots.amp``)."""
   cfg = make_velocity_env_cfg()
 
   # ---- sim settings (flat terrain is cheap) ----------------------------------
@@ -142,6 +147,9 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
     },
   )
   cfg.rewards["action_rate_l2"].weight = robot.action_rate_weight
+
+  if amp:
+    return _finish_amp(cfg, robot, play)
 
   # Gait: a phase clock prescribes *when* each foot is on the ground (left and right
   # half a period apart, duty factor 0.6 walking -> 0.4 running) and how high the
@@ -275,13 +283,76 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
     {"step": 400 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
   ]
 
-  # ---- play-mode overrides ---------------------------------------------------------
+  return _apply_play(cfg, robot, play)
+
+
+def _apply_play(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:
   if play:
+    twist = cfg.commands["twist"]
+    assert isinstance(twist, UniformVelocityCommandCfg)
     cfg.episode_length_s = int(1e9)
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
-    twist.ranges.lin_vel_x = (-v, run)
-    twist.ranges.ang_vel_z = (-w, w)
-
+    twist.ranges.lin_vel_x = (-robot.walk_vel, robot.max_lin_vel)
+    twist.ranges.ang_vel_z = (-robot.max_ang_vel, robot.max_ang_vel)
   return cfg
+
+
+def _finish_amp(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:
+  """AMP variant: task rewards + regularisers + the adversarial style reward."""
+  from chris_robots import amp as chris_amp
+  from chris_robots.tools.mocap import DATA_DIR
+
+  v = robot.walk_vel
+  run = robot.max_lin_vel
+  w = robot.max_ang_vel
+  # Everything "how to move" comes from the data now.
+  for name in ("pose", "lean", "foot_clearance", "foot_swing_height", "air_time"):
+    cfg.rewards.pop(name, None)
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = robot.foot_sites
+  cfg.rewards["foot_slip"].weight = -0.5
+  for name in ("foot_slip", "soft_landing"):
+    cfg.rewards[name].params["command_threshold"] = 0.1 * v
+  left_sign, separation = robot.foot_lateral()
+  cfg.rewards["feet_apart"] = RewardTermCfg(
+    func=chris_mdp.feet_apart,
+    weight=-1.0,
+    params={
+      "site_names": robot.foot_sites,
+      "left_index": robot.foot_order.index("left"),
+      "left_sign": left_sign,
+      "separation_m": separation,
+      "min_frac": 0.6,
+    },
+  )
+  cfg.rewards["foot_flat"] = RewardTermCfg(
+    func=chris_mdp.foot_flat,
+    weight=-2.0,
+    params={
+      "site_names": robot.foot_sites,
+      "up_local": robot.foot_up_axes(),
+      "sensor_name": "feet_ground_contact",
+      "dead_zone_deg": 3.0,
+    },
+  )
+  lateral = robot.lateral_arm_joints()
+  if lateral:
+    cfg.rewards["arm_lateral"] = RewardTermCfg(
+      func=chris_mdp.joint_deviation_l2, weight=-1.0, params={"joint_names": lateral}
+    )
+  cfg.rewards["amp_style"] = RewardTermCfg(
+    func=chris_amp.amp_style,
+    weight=robot.amp_weight,
+    params={
+      "motion_file": str(DATA_DIR / f"{robot.name}.npz"),
+      "foot_sites": robot.foot_sites,
+      "standing_height": robot.standing_height,
+      "train": not play,
+    },
+  )
+  cfg.curriculum["command_vel"].params["velocity_stages"] = [
+    {"step": 0, "lin_vel_x": (-v, 0.5 * run), "ang_vel_z": (-w, w)},
+    {"step": 400 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
+  ]
+  return _apply_play(cfg, robot, play)

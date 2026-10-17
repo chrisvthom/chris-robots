@@ -31,13 +31,20 @@ def register_tasks() -> list[str]:
   existing = set(list_tasks())
   for robot in ALL_ROBOTS:
     # "<task>" is plain PPO; "<task>-Sym" adds left/right mirror augmentation + loss.
-    for task_id, symmetry in ((robot.task_id, False), (f"{robot.task_id}-Sym", True)):
+    # "<task>-Amp" replaces the hand-made animation layer with an adversarial motion
+    # prior from retargeted mocap (needs ``uv run mocap <robot>`` first).
+    variants = (
+      (robot.task_id, False, False),
+      (f"{robot.task_id}-Sym", True, False),
+      (f"{robot.task_id}-Amp", True, True),
+    )
+    for task_id, symmetry, amp in variants:
       if task_id in existing:
         continue
       register_mjlab_task(
         task_id=task_id,
-        env_cfg=make_flat_env_cfg(robot),
-        play_env_cfg=make_flat_env_cfg(robot, play=True),
+        env_cfg=make_flat_env_cfg(robot, amp=amp),
+        play_env_cfg=make_flat_env_cfg(robot, play=True, amp=amp),
         rl_cfg=make_ppo_runner_cfg(robot, symmetry=symmetry),
         runner_cls=VelocityOnPolicyRunner,
       )
