@@ -71,8 +71,12 @@ def export_checkpoints_to_onnx(robot: RobotDef, run_dir: Path, ckpts: list[Path]
 
 
 def task_for_run(robot: RobotDef, run_dir: Path) -> str:
-  """Runs named ``*_amp*`` were trained on the ``-Amp`` task (different observations)."""
-  return f"{robot.task_id}-Amp" if "amp" in run_dir.name.lower() else robot.task_id
+  """Runs named ``*_amp*`` were trained on the ``-Amp`` task (different observations);
+  ``*_hybrid*`` on ``-SymAmp`` (same observations as the plain task)."""
+  name = run_dir.name.lower()
+  if "hybrid" in name:
+    return f"{robot.task_id}-SymAmp"
+  return f"{robot.task_id}-Amp" if "amp" in name else robot.task_id
 
 
 def pick_checkpoints(run_dir: Path, spec: str) -> list[Path]:

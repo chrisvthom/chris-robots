@@ -472,9 +472,7 @@ def main() -> None:
     for stem in ("walk1_subject5", "run1_subject2", "sprint1_subject2"):
       if stem in [p.stem for p in paths]:
         i = [p.stem for p in paths].index(stem)
-        render_playback(
-          robot, chain, clips[i], MEDIA_DIR / f"{robot.name}_{stem}.png", mp4_s=8.0
-        )
+        render_playback(robot, chain, clips[i], MEDIA_DIR / f"{robot.name}_{stem}.png", mp4_s=8.0)
     print(f"rendered playback sheets/mp4s to {MEDIA_DIR}")
 
 

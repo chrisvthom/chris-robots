@@ -31,11 +31,12 @@ STEPS_PER_ITER = 24  # rsl-rl num_steps_per_env
 
 
 def make_flat_env_cfg(
-  robot: RobotDef, play: bool = False, amp: bool = False
+  robot: RobotDef, play: bool = False, amp: bool = False, amp_hybrid: bool = False
 ) -> ManagerBasedRlEnvCfg:
   """``amp=True`` swaps the hand-designed animation layer (gait clock, arm swing,
   torso sway, bob, pose prior, lean) for an adversarial motion prior trained on
-  retargeted human mocap (see ``chris_robots.amp``)."""
+  retargeted human mocap (see ``chris_robots.amp``). ``amp_hybrid=True`` keeps the
+  animation layer and *adds* the motion prior as a lower-weight style nudge."""
   cfg = make_velocity_env_cfg()
 
   # ---- sim settings (flat terrain is cheap) ----------------------------------
@@ -277,6 +278,9 @@ def make_flat_env_cfg(
       params={"joint_names": lateral},
     )
 
+  if amp_hybrid:
+    cfg.rewards["amp_style"] = _amp_term(robot, play, weight=1.0)
+
   # ---- curriculum: start at a jog, open up to the full sprint range early ----------
   cfg.curriculum["command_vel"].params["velocity_stages"] = [
     {"step": 0, "lin_vel_x": (-v, 0.5 * run), "ang_vel_z": (-w, w)},
@@ -299,11 +303,24 @@ def _apply_play(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> Manag
   return cfg
 
 
-def _finish_amp(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:
-  """AMP variant: task rewards + regularisers + the adversarial style reward."""
+def _amp_term(robot: RobotDef, play: bool, weight: float) -> RewardTermCfg:
   from chris_robots import amp as chris_amp
   from chris_robots.tools.mocap import DATA_DIR
 
+  return RewardTermCfg(
+    func=chris_amp.amp_style,
+    weight=weight,
+    params={
+      "motion_file": str(DATA_DIR / f"{robot.name}.npz"),
+      "foot_sites": robot.foot_sites,
+      "standing_height": robot.standing_height,
+      "train": not play,
+    },
+  )
+
+
+def _finish_amp(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> ManagerBasedRlEnvCfg:
+  """AMP variant: task rewards + regularisers + the adversarial style reward."""
   v = robot.walk_vel
   run = robot.max_lin_vel
   w = robot.max_ang_vel
@@ -341,16 +358,7 @@ def _finish_amp(cfg: ManagerBasedRlEnvCfg, robot: RobotDef, play: bool) -> Manag
     cfg.rewards["arm_lateral"] = RewardTermCfg(
       func=chris_mdp.joint_deviation_l2, weight=-1.0, params={"joint_names": lateral}
     )
-  cfg.rewards["amp_style"] = RewardTermCfg(
-    func=chris_amp.amp_style,
-    weight=robot.amp_weight,
-    params={
-      "motion_file": str(DATA_DIR / f"{robot.name}.npz"),
-      "foot_sites": robot.foot_sites,
-      "standing_height": robot.standing_height,
-      "train": not play,
-    },
-  )
+  cfg.rewards["amp_style"] = _amp_term(robot, play, weight=robot.amp_weight)
   cfg.curriculum["command_vel"].params["velocity_stages"] = [
     {"step": 0, "lin_vel_x": (-v, 0.5 * run), "ang_vel_z": (-w, w)},
     {"step": 400 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},

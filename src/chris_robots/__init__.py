@@ -33,18 +33,20 @@ def register_tasks() -> list[str]:
     # "<task>" is plain PPO; "<task>-Sym" adds left/right mirror augmentation + loss.
     # "<task>-Amp" replaces the hand-made animation layer with an adversarial motion
     # prior from retargeted mocap (needs ``uv run mocap <robot>`` first).
+    # "<task>-SymAmp" keeps the animation layer and adds the prior as a style nudge.
     variants = (
-      (robot.task_id, False, False),
-      (f"{robot.task_id}-Sym", True, False),
-      (f"{robot.task_id}-Amp", True, True),
+      (robot.task_id, False, False, False),
+      (f"{robot.task_id}-Sym", True, False, False),
+      (f"{robot.task_id}-Amp", True, True, False),
+      (f"{robot.task_id}-SymAmp", True, False, True),
     )
-    for task_id, symmetry, amp in variants:
+    for task_id, symmetry, amp, hybrid in variants:
       if task_id in existing:
         continue
       register_mjlab_task(
         task_id=task_id,
-        env_cfg=make_flat_env_cfg(robot, amp=amp),
-        play_env_cfg=make_flat_env_cfg(robot, play=True, amp=amp),
+        env_cfg=make_flat_env_cfg(robot, amp=amp, amp_hybrid=hybrid),
+        play_env_cfg=make_flat_env_cfg(robot, play=True, amp=amp, amp_hybrid=hybrid),
         rl_cfg=make_ppo_runner_cfg(robot, symmetry=symmetry),
         runner_cls=VelocityOnPolicyRunner,
       )
