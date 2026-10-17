@@ -59,6 +59,67 @@ class arm_swing:
     return reward * moving.float()
 
 
+def _moving(env: ManagerBasedRlEnv, command_name: str, threshold: float) -> torch.Tensor:
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  return ((torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])) > threshold).float()
+
+
+def lean(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  run_vel: float,
+  lean_at_run: float,
+  std: float,
+) -> torch.Tensor:
+  """Replace 'upright' with a speed-dependent forward lean.
+
+  Target pitch = lean_at_run * clamp(cmd_vx, 0) / run_vel, so the torso stays level
+  when standing and leans into the run at top speed. Roll is pulled towards zero
+  with the same tolerance. In the base frame, gravity's x component is +sin(pitch)
+  for a nose-down pitch.
+  """
+  asset: Entity = env.scene["robot"]
+  g = asset.data.projected_gravity_b
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  target = torch.sin(lean_at_run * torch.clamp(command[:, 0], min=0.0) / run_vel)
+  err = torch.square(g[:, 0] - target) + torch.square(g[:, 1])
+  return torch.exp(-err / std**2)
+
+
+class stride:
+  """Reward fore-aft separation of the feet (normalised by ``cap``) while moving.
+
+  Dense version of a step-length reward: averaged over a gait cycle it grows with
+  stride length, so the policy prefers long strides to a quick shuffle at the same
+  speed. Separation is measured along the base heading.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene["robot"]
+    ids, _ = asset.find_sites(list(cfg.params["site_names"]), preserve_order=True)
+    assert len(ids) == 2, ids
+    self.site_ids = torch.tensor(ids, device=env.device)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    site_names: tuple[str, ...],
+    cap: float,
+    command_name: str,
+    command_threshold: float,
+  ) -> torch.Tensor:
+    del site_names
+    asset: Entity = env.scene["robot"]
+    pos = asset.data.site_pos_w[:, self.site_ids, :2]  # [B, 2, 2]
+    delta = pos[:, 0] - pos[:, 1]
+    heading = asset.data.heading_w
+    fwd = torch.stack([torch.cos(heading), torch.sin(heading)], dim=1)
+    sep = torch.abs(torch.sum(delta * fwd, dim=1))
+    return torch.clamp(sep / cap, max=1.0) * _moving(env, command_name, command_threshold)
+
+
 def feet_air_time_biped(
   env: ManagerBasedRlEnv,
   sensor_name: str,

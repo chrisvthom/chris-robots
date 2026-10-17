@@ -8,8 +8,6 @@ randomization) is scaled from the RobotDef so the same code serves a 1.4 m,
 
 from __future__ import annotations
 
-import math
-
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.reward_manager import RewardTermCfg
@@ -80,15 +78,16 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   cfg.viewer.distance = max(1.5, 2.5 * robot.standing_height)
   cfg.viewer.elevation = -10.0
 
-  v = robot.max_lin_vel
+  v = robot.walk_vel  # nominal walking speed: the unit for thresholds/stds
+  run = robot.max_lin_vel
   w = robot.max_ang_vel
 
   twist = cfg.commands["twist"]
   assert isinstance(twist, UniformVelocityCommandCfg)
   twist.viz.z_offset = robot.standing_height + 0.25
-  twist.ranges.lin_vel_x = (-v, v)
+  twist.ranges.lin_vel_x = (-v, run)
   twist.ranges.lin_vel_y = (-0.6 * v, 0.6 * v)
-  twist.ranges.ang_vel_z = (-0.5 * w, 0.5 * w)
+  twist.ranges.ang_vel_z = (-w, w)
 
   # ---- events (domain randomization) ---------------------------------------------
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = robot.foot_geoms
@@ -109,26 +108,41 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   }
 
   # ---- rewards ---------------------------------------------------------------------
+  # Design goal: an *animated character*, not a controller. These policies only ever
+  # run in a browser, so we trade robustness for drama: big strides, visible foot
+  # lift, arm swing, a forward lean that grows with speed, and a torso that is
+  # allowed to move. Falling is cheap (episode ends) rather than penalised.
+  assert robot.posture is not None
   cfg.rewards["pose"].params["std_standing"] = dict(robot.posture.standing)
   cfg.rewards["pose"].params["std_walking"] = dict(robot.posture.walking)
   cfg.rewards["pose"].params["std_running"] = dict(robot.posture.running)
-  # Speed regime thresholds scale with the robot's speed range.
-  cfg.rewards["pose"].params["walking_threshold"] = 0.05 * v
-  cfg.rewards["pose"].params["running_threshold"] = 1.5 * v
+  cfg.rewards["pose"].params["walking_threshold"] = 0.1 * v
+  cfg.rewards["pose"].params["running_threshold"] = 1.6 * v
+  cfg.rewards["pose"].weight = 0.5
 
-  cfg.rewards["track_linear_velocity"].params["std"] = math.sqrt(0.25) * v
-  cfg.rewards["upright"].params["asset_cfg"].body_names = (robot.base_body,)
-  cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = (robot.base_body,)
-  cfg.rewards["body_ang_vel"].weight = robot.body_ang_vel_weight
-  cfg.rewards["angular_momentum"].weight = robot.angular_momentum_weight
+  cfg.rewards["track_linear_velocity"].weight = 3.0
+  cfg.rewards["track_linear_velocity"].params["std"] = 0.5 * v
 
-  # Gait shaping. With mjlab's defaults our flat box soles learn a fast double-support
-  # shuffle (~1 cm foot lift, no lateral weight shift): the swing-height penalty is
-  # worth ~0.01/step against a 2.0/step velocity reward. Lean harder on clearance and
-  # add Isaac Lab's biped air-time reward, which pays for long single-stance phases.
-  # Durations scale with leg length (a 0.35 m robot's natural cadence is ~1.7x faster
-  # than a 1 m one).
-  swing_t = 0.4 * math.sqrt(robot.standing_height)
+  # No "keep the torso level" terms: upright -> speed-dependent lean, and the
+  # angular-velocity / angular-momentum penalties go entirely.
+  cfg.rewards.pop("upright")
+  cfg.rewards.pop("body_ang_vel")
+  cfg.rewards.pop("angular_momentum")
+  cfg.rewards["lean"] = RewardTermCfg(
+    func=chris_mdp.lean,
+    weight=1.0,
+    params={
+      "command_name": "twist",
+      "run_vel": run,
+      "lean_at_run": robot.lean_at_run,
+      "std": 0.35,
+    },
+  )
+  cfg.rewards["action_rate_l2"].weight = -0.05
+
+  # Gait shaping. mjlab's defaults produce a fast double-support shuffle on flat box
+  # soles; these terms pay for lift, long single-stance phases and long strides.
+  assert robot.swing_time is not None and robot.stride_cap is not None
   for name in ("foot_clearance", "foot_slip"):
     cfg.rewards[name].params["asset_cfg"].site_names = robot.foot_sites
   cfg.rewards["foot_clearance"].params["target_height"] = robot.foot_clearance
@@ -140,10 +154,20 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   cfg.rewards.pop("air_time")
   cfg.rewards["air_time_biped"] = RewardTermCfg(
     func=chris_mdp.feet_air_time_biped,
-    weight=1.0,
+    weight=2.0,
     params={
       "sensor_name": "feet_ground_contact",
-      "threshold": swing_t,
+      "threshold": robot.swing_time,
+      "command_name": "twist",
+      "command_threshold": 0.1 * v,
+    },
+  )
+  cfg.rewards["stride"] = RewardTermCfg(
+    func=chris_mdp.stride,
+    weight=0.5,
+    params={
+      "site_names": robot.foot_sites,
+      "cap": robot.stride_cap,
       "command_name": "twist",
       "command_threshold": 0.1 * v,
     },
@@ -157,16 +181,16 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
       params={
         "pairs": pairs,
         "gain": robot.arm_swing_gain,
-        "std": 0.25,
+        "std": 0.3,
         "command_name": "twist",
         "command_threshold": 0.1 * v,
       },
     )
 
-  # ---- curriculum: widen the command range once the robot can walk ---------------
+  # ---- curriculum: start at a jog, open up to the full sprint range early ----------
   cfg.curriculum["command_vel"].params["velocity_stages"] = [
-    {"step": 0, "lin_vel_x": (-v, v), "ang_vel_z": (-0.5 * w, 0.5 * w)},
-    {"step": 2500 * STEPS_PER_ITER, "lin_vel_x": (-v, 1.5 * v), "ang_vel_z": (-w, w)},
+    {"step": 0, "lin_vel_x": (-v, 0.5 * run), "ang_vel_z": (-w, w)},
+    {"step": 800 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
   ]
 
   # ---- play-mode overrides ---------------------------------------------------------
@@ -175,7 +199,7 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
-    twist.ranges.lin_vel_x = (-v, 1.5 * v)
+    twist.ranges.lin_vel_x = (-v, run)
     twist.ranges.ang_vel_z = (-w, w)
 
   return cfg

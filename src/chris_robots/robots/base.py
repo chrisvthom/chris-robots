@@ -73,17 +73,58 @@ class PostureStd:
   running: dict[str, float]
 
 
+# Default posture tolerances (rad) for the "animated character" gait: pattern ->
+# (walking std, running std). Deliberately loose on the legs and shoulders so the
+# posture term only vetoes silly poses, not big strides. Standing is always tight.
+DYNAMIC_POSTURE: dict[str, tuple[float, float]] = {
+  r".*hip_pitch.*": (0.7, 1.2),
+  r".*hip_roll.*": (0.3, 0.4),
+  r".*hip_yaw.*": (0.3, 0.4),
+  r".*knee.*": (0.9, 1.4),
+  r".*ankle.*": (0.5, 0.7),
+  r".*shoulder_pitch.*": (0.8, 1.2),
+  r".*shoulder_roll.*": (0.3, 0.4),
+  r".*shoulder_yaw.*": (0.3, 0.4),
+  r".*elbow.*": (0.5, 0.8),
+  r".*wrist.*": (0.3, 0.4),
+  r".*gripper.*": (0.05, 0.05),
+}
+_FALLBACK_POSTURE = (0.3, 0.5)
+STANDING_POSTURE_STD = 0.05
+
+
+def dynamic_posture(joint_names: tuple[str, ...], scale: float = 1.0) -> PostureStd:
+  """Build a PostureStd from DYNAMIC_POSTURE for exactly these joints."""
+  walking: dict[str, float] = {}
+  running: dict[str, float] = {}
+  for pattern, (w, r) in DYNAMIC_POSTURE.items():
+    if any(re.fullmatch(pattern, n) for n in joint_names):
+      walking[pattern] = w * scale
+      running[pattern] = r * scale
+  for n in joint_names:
+    hits = [p for p in walking if re.fullmatch(p, n)]
+    if len(hits) > 1:
+      raise ValueError(f"joint {n} matches several posture patterns: {hits}")
+    if not hits:
+      walking[n], running[n] = _FALLBACK_POSTURE
+  return PostureStd(standing={".*": STANDING_POSTURE_STD}, walking=walking, running=running)
+
+
 @dataclass
 class RobotDef:
   name: str
   actuators: tuple[ActuatorGroup, ...]
-  posture: PostureStd
   action_scale: float | dict[str, float]
   """Joint-position action scale (rad per unit action)."""
+  walk_vel: float
+  """Nominal walking speed (m/s). Sets tracking std, lateral/backward ranges, speed
+  regime thresholds and the eval 'walk' segment."""
   max_lin_vel: float
-  """Max forward speed command used in training/play (m/s). Sets the scale of all
-  velocity-related ranges, stds and curriculum stages."""
+  """Top (running) forward speed command (m/s)."""
   max_ang_vel: float = 1.0
+  posture: PostureStd | None = None
+  """None -> dynamic_posture(joint_names)."""
+  posture_scale: float = 1.0
   foot_clearance: float = 0.08
   """Target swing-foot height (m)."""
   push_vel: float = 0.5
@@ -96,11 +137,18 @@ class RobotDef:
   """Additional init joint positions (regex -> value), e.g. arm pose."""
   base_body: str = "base"
   foot_friction: float = 0.8
-  body_ang_vel_weight: float = -0.05
-  angular_momentum_weight: float = -0.02
-  arm_swing_gain: float = 0.0
+  arm_swing_gain: float = 1.0
   """Cosmetic: reward each shoulder pitch for following the opposite hip pitch with
   this gain (0 disables the term)."""
+  lean_at_run: float = 0.2
+  """Forward torso lean (rad) rewarded at max_lin_vel, scaled linearly with the
+  commanded forward speed."""
+  swing_time: float | None = None
+  """Single-stance duration rewarded by the biped air-time term (s). None ->
+  0.55 * sqrt(standing_height)."""
+  stride_cap: float | None = None
+  """Fore-aft foot separation at which the stride reward saturates (m). None ->
+  0.5 * standing_height."""
   hip_adduction_min: float = 0.0
   """Sim-only: widen the adduction side (the smaller side) of every hip-roll joint range
   to at least this many radians. Several of these robots only allow 0.1-0.2 rad of
@@ -132,6 +180,12 @@ class RobotDef:
     self.foot_bodies: tuple[str, ...] = tuple(self.info["feet"][s]["body"] for s in self.foot_order)
     self.standing_height: float = float(self.info["standing_base_height_m"])
     self.display_name: str = self.info["display_name"]
+    if self.posture is None:
+      self.posture = dynamic_posture(self.joint_names, self.posture_scale)
+    if self.swing_time is None:
+      self.swing_time = 0.55 * math.sqrt(self.standing_height)
+    if self.stride_cap is None:
+      self.stride_cap = 0.5 * self.standing_height
     if self.init_bend is not None:
       # Re-derive the knees-bent init pose with a different bend (lazy import: the
       # importer module imports this package).

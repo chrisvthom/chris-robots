@@ -24,6 +24,9 @@ COLUMNS = {
   "Episode_Reward/foot_clearance": "r_clear",
   "Episode_Reward/action_rate_l2": "r_actrate",
   "Episode_Reward/air_time_biped": "r_airbip",
+  "Episode_Reward/stride": "r_stride",
+  "Episode_Reward/lean": "r_lean",
+  "Episode_Reward/arm_swing": "r_arms",
   "Train/mean_action_std": "act_std",
 }
 

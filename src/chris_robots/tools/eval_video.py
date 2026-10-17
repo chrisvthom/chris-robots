@@ -95,14 +95,17 @@ def pick_checkpoints(run_dir: Path, spec: str) -> list[Path]:
 # --------------------------------------------------------------------------- rollout
 
 
-def command_script(v: float, w: float) -> list[tuple[str, float, np.ndarray]]:
-  """(label, duration s, [vx, vy, wz]) segments."""
+def command_script(robot: RobotDef) -> list[tuple[str, float, np.ndarray]]:
+  """(label, duration s, [vx, vy, wz]) segments: stand, walk, turn, sidestep, jog, sprint."""
+  v, run, w = robot.walk_vel, robot.max_lin_vel, robot.max_ang_vel
+  jog = 0.5 * (v + run)
   return [
     ("stand", 1.5, np.array([0.0, 0.0, 0.0])),
-    ("walk 0.6v", 4.0, np.array([0.6 * v, 0.0, 0.0])),
-    ("turn left", 3.0, np.array([0.3 * v, 0.0, 0.6 * w])),
-    ("sidestep", 2.5, np.array([0.0, 0.4 * v, 0.0])),
-    ("walk fast 1.0v", 3.5, np.array([v, 0.0, 0.0])),
+    (f"walk {v:.2f} m/s", 3.5, np.array([v, 0.0, 0.0])),
+    ("turn left", 3.0, np.array([0.5 * v, 0.0, 0.6 * w])),
+    ("sidestep", 2.0, np.array([0.0, 0.5 * v, 0.0])),
+    (f"jog {jog:.2f} m/s", 3.0, np.array([jog, 0.0, 0.0])),
+    (f"sprint {run:.2f} m/s", 3.5, np.array([run, 0.0, 0.0])),
     ("stop", 1.5, np.array([0.0, 0.0, 0.0])),
   ]
 
@@ -148,7 +151,7 @@ def render_eval(
   ]
   fell_at = None
   t = 0.0
-  for label, duration, cmd in command_script(robot.max_lin_vel, robot.max_ang_vel):
+  for label, duration, cmd in command_script(robot):
     seg_vel, seg_clear = [], []
     start = runner.base_pos().copy()
     n = int(duration / dt)
@@ -235,7 +238,7 @@ def render_eval(
   x0 = (width - crop_w) // 2
   sheet_frames = []
   seg_bounds, acc = [], 0
-  for label, duration, _ in command_script(robot.max_lin_vel, robot.max_ang_vel):
+  for label, duration, _ in command_script(robot):
     n = int(duration / dt) // every
     if label not in ("stand", "stop"):
       seg_bounds.append((acc, acc + n))

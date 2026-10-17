@@ -209,8 +209,7 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
     int(model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, j)])
     for j in meta["joint_names"]
   ]
-  v = robot.max_lin_vel
-  w = robot.max_ang_vel
+  v, run, w = robot.walk_vel, robot.max_lin_vel, robot.max_ang_vel
   return {
     "robot": robot.name,
     "display_name": robot.display_name,
@@ -253,11 +252,16 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
     "command": {
       "order": ["lin_vel_x", "lin_vel_y", "ang_vel_z"],
       "ranges": {
-        "lin_vel_x": [-v, 1.5 * v],
+        "lin_vel_x": [-v, run],
         "lin_vel_y": [-0.6 * v, 0.6 * v],
         "ang_vel_z": [-w, w],
       },
-      "suggested_walk": [0.6 * v, 0.0, 0.0],
+      "presets": {
+        "walk": [v, 0.0, 0.0],
+        "jog": [0.5 * (v + run), 0.0, 0.0],
+        "sprint": [run, 0.0, 0.0],
+      },
+      "suggested_walk": [v, 0.0, 0.0],
     },
   }
 
