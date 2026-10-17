@@ -66,26 +66,26 @@ class amp_style:
     # The npz stores feet in the robot's foot_sites order; the env term is given the
     # same tuple, so no permutation is needed.
 
-    ref = np.concatenate(
-      [
-        data["joint_pos"],
-        data["joint_vel"],
-        data["root_lin_vel_b"],
-        data["root_ang_vel_b"],
-        data["gravity_b"],
-        data["root_height"],
-        data["foot_pos_b"],
-      ],
-      axis=1,
-    ).astype(np.float32)
+    # Which features the discriminator sees. Sim joint/angular velocities carry
+    # high-frequency contact noise that the smooth mocap never has, which lets D win on
+    # noise alone; so by default velocities are left implicit in the transition pair,
+    # taken ``transition_steps`` policy steps apart (0.1 s) rather than consecutive.
+    self.feature_set = tuple(
+      p.get(
+        "feature_set", ("joint_pos", "root_lin_vel_b", "gravity_b", "root_height", "foot_pos_b")
+      )
+    )
+    self.k = int(p.get("transition_steps", 5))
+    ref = np.concatenate([data[name] for name in self.feature_set], axis=1).astype(np.float32)
     clip = data["clip"]
     h_stand = float(p["standing_height"])
     ok = data["root_height"][:, 0] > p.get("min_height_frac", 0.85) * h_stand
-    same_clip = clip[1:] == clip[:-1]
-    valid = same_clip & ok[1:] & ok[:-1]
+    k = self.k
+    same_clip = clip[k:] == clip[:-k]
+    valid = same_clip & ok[k:] & ok[:-k]
     ref_t = torch.tensor(ref, device=self.device)
     idx = torch.tensor(np.nonzero(valid)[0], device=self.device)
-    self.expert = torch.cat([ref_t[idx], ref_t[idx + 1]], dim=1)  # [M, 2F]
+    self.expert = torch.cat([ref_t[idx], ref_t[idx + k]], dim=1)  # [M, 2F]
     self.feat_dim = ref.shape[1]
     mean = self.expert.mean(0)
     std = self.expert.std(0).clamp(min=1e-2)
@@ -99,19 +99,19 @@ class amp_style:
       self.device
     )
     self.opt = torch.optim.Adam(self.disc.parameters(), lr=float(p.get("lr", 1e-4)))
-    self.grad_penalty = float(p.get("grad_penalty", 5.0))
+    self.grad_penalty = float(p.get("grad_penalty", 10.0))
     self.logit_reg = float(p.get("logit_reg", 0.05))
     self.update_every = int(p.get("update_every", 24))
     self.minibatch = int(p.get("minibatch", 4096))
-    self.epochs = int(p.get("epochs", 2))
+    self.epochs = int(p.get("epochs", 1))
     self.train = bool(p.get("train", True))
 
     n = env.num_envs
-    cap = int(p.get("buffer_steps", 48)) * n
+    cap = int(p.get("buffer_steps", 24)) * n
     self.buffer = torch.zeros(cap, 2 * self.feat_dim, device=self.device)
     self.buf_ptr = 0
     self.buf_full = False
-    self.prev = torch.zeros(n, self.feat_dim, device=self.device)
+    self.hist = torch.zeros(self.k, n, self.feat_dim, device=self.device)  # ring of past feats
     self.step = 0
     self.last_stats: dict[str, float] = {}
 
@@ -123,16 +123,29 @@ class amp_style:
   def features(self, env: ManagerBasedRlEnv) -> torch.Tensor:
     asset: Entity = env.scene["robot"]
     d = asset.data
-    q = d.joint_pos[:, self.joint_ids]
-    qd = d.joint_vel[:, self.joint_ids]
     quat = d.root_link_quat_w
-    lin_b = quat_apply_inverse(quat, d.root_link_lin_vel_w)
-    ang_b = d.root_link_ang_vel_b
-    grav = d.projected_gravity_b
-    height = d.root_link_pos_w[:, 2:3]
-    feet = d.site_pos_w[:, self.site_ids] - d.root_link_pos_w[:, None, :]
-    feet_b = torch.cat([quat_apply_inverse(quat, feet[:, i]) for i in range(feet.shape[1])], dim=1)
-    return torch.cat([q, qd, lin_b, ang_b, grav, height, feet_b], dim=1)
+    parts = []
+    for name in self.feature_set:
+      if name == "joint_pos":
+        parts.append(d.joint_pos[:, self.joint_ids])
+      elif name == "joint_vel":
+        parts.append(d.joint_vel[:, self.joint_ids])
+      elif name == "root_lin_vel_b":
+        parts.append(quat_apply_inverse(quat, d.root_link_lin_vel_w))
+      elif name == "root_ang_vel_b":
+        parts.append(d.root_link_ang_vel_b)
+      elif name == "gravity_b":
+        parts.append(d.projected_gravity_b)
+      elif name == "root_height":
+        parts.append(d.root_link_pos_w[:, 2:3])
+      elif name == "foot_pos_b":
+        feet = d.site_pos_w[:, self.site_ids] - d.root_link_pos_w[:, None, :]
+        parts.append(
+          torch.cat([quat_apply_inverse(quat, feet[:, i]) for i in range(feet.shape[1])], dim=1)
+        )
+      else:
+        raise KeyError(name)
+    return torch.cat(parts, dim=1)
 
   def norm(self, x: torch.Tensor) -> torch.Tensor:
     return (x - self.mean) / self.std
@@ -141,24 +154,21 @@ class amp_style:
   def __call__(self, env: ManagerBasedRlEnv, **kwargs) -> torch.Tensor:
     del kwargs
     feat = self.features(env)
-    first = env.episode_length_buf <= 1
-    prev = torch.where(first[:, None], feat, self.prev)
+    slot = self.step % self.k
+    first = env.episode_length_buf <= self.k  # history would span a reset
+    prev = torch.where(first[:, None], feat, self.hist[slot])  # feature k steps ago
     trans = torch.cat([prev, feat], dim=1)
     with torch.no_grad():
       logits = self.disc(self.norm(trans))
     reward = torch.clamp(1.0 - 0.25 * (logits - 1.0) ** 2, min=0.0)
 
-    if self.train:
-      with torch.inference_mode(False):
-        self.prev.copy_(feat.clone())
-        keep = trans[~first].clone()
-        self._store(keep)
-        self.step += 1
+    with torch.inference_mode(False):
+      self.hist[slot].copy_(feat.clone())
+      self.step += 1
+      if self.train:
+        self._store(trans[~first].clone())
         if self.step % self.update_every == 0 and (self.buf_full or self.buf_ptr > self.minibatch):
           self._update()
-    else:
-      with torch.inference_mode(False):
-        self.prev.copy_(feat.clone())
     return reward
 
   def _store(self, x: torch.Tensor) -> None:
