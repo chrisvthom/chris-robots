@@ -13,7 +13,7 @@ OPUS = RobotDef(
   name="opus",
   actuators=(
     ActuatorGroup(
-      "servo_leg", _LEGS, effort_limit=3.0, armature=0.004, **{**SOFT_SERVO, "natural_freq_hz": 8.0}
+      "servo_leg", _LEGS, effort_limit=3.0, armature=0.004, **{**SOFT_SERVO, "natural_freq_hz": 6.5}
     ),
     ActuatorGroup("servo_arm", _ARMS, effort_limit=1.0, armature=0.002, **SOFT_SERVO),
   ),
@@ -27,6 +27,6 @@ OPUS = RobotDef(
   hip_adduction_min=0.5,
   arm_swing_gain=1.5,  # light arms: ask for a bigger swing so it reads on camera
   action_rate_weight=-0.15,  # hobby servos: smooth, not twitchy
-  sway_roll_deg=6.0,
-  sway_yaw_deg=8.0,
+  sway_roll_deg=10.0,
+  sway_yaw_deg=12.0,
 )

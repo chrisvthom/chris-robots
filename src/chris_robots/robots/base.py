@@ -39,7 +39,7 @@ def pd_from_armature(
 # Hobby-servo feel for the Feetech robots: lower closed-loop bandwidth and under-damped,
 # so the joints lag and overshoot a little instead of snapping to the target (the real
 # STS servos are slow and soft; the mjlab default 10 Hz / zeta 2 made them look CNC-stiff).
-SOFT_SERVO = {"natural_freq_hz": 6.5, "damping_ratio": 0.8}
+SOFT_SERVO = {"natural_freq_hz": 5.0, "damping_ratio": 0.6}
 
 
 @dataclass(frozen=True)
@@ -160,12 +160,13 @@ class RobotDef:
   base_body: str = "base"
   foot_friction: float = 0.8
   arm_swing_gain: float = 1.0
-  sway_roll_deg: float = 5.0
-  """Torso roll toward the stance leg (pelvic list is ~5-7 deg each way in humans)."""
-  sway_yaw_deg: float = 6.0
-  """Pelvic rotation amplitude (humans: ~4 deg each way, more when fast)."""
-  bob_frac: float = 0.03
-  """Vertical bob amplitude as a fraction of standing height (humans ~3%)."""
+  sway_roll_deg: float = 9.0
+  """Torso roll toward the stance leg (pelvic list is ~5-7 deg each way in humans;
+  exaggerated here for an animated look)."""
+  sway_yaw_deg: float = 10.0
+  """Pelvic rotation amplitude (humans: ~4 deg each way, more when fast; exaggerated)."""
+  bob_frac: float = 0.05
+  """Vertical bob amplitude as a fraction of standing height (humans ~3%; exaggerated)."""
   action_rate_weight: float = -0.05
   """Penalty on action change per step; stronger for twitchy little servos."""
   """Cosmetic: reward each shoulder pitch for following the opposite hip pitch with

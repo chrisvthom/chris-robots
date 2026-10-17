@@ -25,6 +25,6 @@ ZBOT_V2 = RobotDef(
   hip_adduction_min=0.5,
   arm_swing_gain=1.5,  # light arms: ask for a bigger swing so it reads on camera
   action_rate_weight=-0.15,  # hobby servos: smooth, not twitchy
-  sway_roll_deg=6.0,
-  sway_yaw_deg=8.0,
+  sway_roll_deg=10.0,
+  sway_yaw_deg=12.0,
 )

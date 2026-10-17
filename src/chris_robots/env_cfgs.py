@@ -220,7 +220,7 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
       "clock_name": "gait_clock",
       "left_sign": left_sign,
       "roll_deg": robot.sway_roll_deg,
-      "std": 0.06,
+      "std": 0.08,
     },
   )
   cfg.rewards["base_bob"] = RewardTermCfg(
