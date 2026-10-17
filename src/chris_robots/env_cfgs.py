@@ -365,37 +365,47 @@ def mimic_joint_weights(robot: RobotDef) -> tuple[float, ...]:
 
 
 def _gentle_terrain(cfg: ManagerBasedRlEnvCfg, robot: RobotDef) -> None:
-  """Uneven ground a blind policy can walk, every size scaled to the robot: long
-  waves, a little random roughness, mild (<7 deg) pyramids, and flat patches. Covers
-  the website's bumps (lib/sim/terrain.ts: about +-4% of standing height)."""
+  """Uneven ground a blind policy can walk, every size scaled to the robot: tilted
+  plates (up to 6 deg, +-2% of standing height), a grid of small steps (up to 2.4%),
+  and flat patches. Covers the website's bumps (lib/sim/terrain.ts: about +-4% of
+  standing height, over a much longer wavelength).
+
+  Only boxes and convex meshes: MuJoCo Warp's heightfield contacts don't hold a box
+  foot (a flat policy that never falls on a plane fell ~44 times a minute on a flat
+  heightfield), so the mjlab heightfield terrains are out."""
+  cfg.sim.nconmax = 48
+  cfg.sim.njmax = 400
   h = robot.standing_height
-  hs = min(0.1, max(0.03, 0.08 * h))  # heightfield cell
-  common = {"border_width": hs, "horizontal_scale": hs, "vertical_scale": 0.0025 * h}
+  edge = 0.25 * h
+  # Tiles scale with the robot so the geom count doesn't grow for small robots: the
+  # raycast sensors' BVH spans every terrain geom in every world, and ~12k geoms x
+  # 4096 worlds is already 14 GB (and the most Warp will build).
   cfg.scene.terrain = TerrainEntityCfg(
     terrain_type="generator",
     terrain_generator=TerrainGeneratorCfg(
-      size=(8.0, 8.0),
-      border_width=10.0,
-      num_rows=10,
-      num_cols=10,
+      size=(8.0 * min(1.0, h),) * 2,
+      border_width=10.0 * h,
+      num_rows=8,
+      num_cols=8,
       sub_terrains={
-        "flat": terrains.flat(proportion=0.25),
-        "waves": terrains.wave_terrain(
-          proportion=0.25,
-          amplitude_range=(0.01 * h, 0.06 * h),
-          num_waves=max(2, round(8.0 / (2.5 * h))),
-          **common,
+        "flat": terrains.flat(proportion=0.3),
+        "plates": terrains.tilted_grid(
+          proportion=0.4,
+          grid_width=0.6 * h,
+          tilt_range_deg=6.0,
+          height_range=0.04 * h,
+          platform_width=h,
+          border_width=edge,
+          floor_depth=0.5,
         ),
-        "rough": terrains.random_rough(
-          proportion=0.2,
-          noise_range=(0.0, 0.025 * h),
-          noise_step=0.0025 * h,
-          downsampled_scale=max(hs, 0.25 * h),
-          **common,
-        ),
-        "slope": terrains.hf_pyramid_slope(proportion=0.15, slope_range=(0.0, 0.12), **common),
-        "slope_inv": terrains.hf_pyramid_slope_inv(
-          proportion=0.15, slope_range=(0.0, 0.12), **common
+        "steps": terrains.box_random_grid(
+          proportion=0.3,
+          grid_width=0.4 * h,
+          grid_height_range=(0.0, 0.012 * h),
+          platform_width=h,
+          border_width=edge,
+          merge_similar_heights=True,
+          height_merge_threshold=0.003 * h,
         ),
       },
     ),
