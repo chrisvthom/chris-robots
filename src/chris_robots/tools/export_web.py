@@ -102,6 +102,7 @@ def build_scene_spec(robot: RobotDef, meta: dict) -> mujoco.MjSpec:
   """robots/<name>/scene.xml + feet-only collisions + position actuators + keyframe."""
   spec = mujoco.MjSpec.from_file(str(robot.dir / "scene.xml"))
   robot.apply_joint_overrides(spec)
+  _apply_sim_options(spec, robot)
 
   # Same collision structure mjlab applied during training. mjlab applies this to the
   # robot-only spec; here the floor is in the same spec, so restore it afterwards.
@@ -131,6 +132,34 @@ def build_scene_spec(robot: RobotDef, meta: dict) -> mujoco.MjSpec:
   return spec
 
 
+def _apply_sim_options(spec: mujoco.MjSpec, robot: RobotDef) -> None:
+  """Bake the training-time <option> values into the bundle.
+
+  mjlab overrides the model's options at load time (0.005 s implicitfast, Newton
+  solver, ...). The K-Scale MJCFs carry their own <option timestep="0.002">, so a
+  bundle that keeps them would run 2.5x slow motion and see different dynamics.
+  """
+  from mjlab.sim.sim import _CONE_MAP, _INTEGRATOR_MAP, _JACOBIAN_MAP, _SOLVER_MAP
+
+  from chris_robots.env_cfgs import make_flat_env_cfg
+
+  mj = make_flat_env_cfg(robot, play=True).sim.mujoco
+  o = spec.option
+  o.timestep = mj.timestep
+  o.integrator = _INTEGRATOR_MAP[mj.integrator]
+  o.solver = _SOLVER_MAP[mj.solver]
+  o.cone = _CONE_MAP[mj.cone]
+  o.jacobian = _JACOBIAN_MAP[mj.jacobian]
+  o.impratio = mj.impratio
+  o.iterations = mj.iterations
+  o.tolerance = mj.tolerance
+  o.ls_iterations = mj.ls_iterations
+  o.ls_tolerance = mj.ls_tolerance
+  o.ccd_iterations = mj.ccd_iterations
+  o.gravity = list(mj.gravity)
+  assert abs(mj.timestep - SIM_DT) < 1e-9, "SIM_DT out of sync with mjlab config"
+
+
 def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
   import re
 
@@ -140,7 +169,7 @@ def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
 # --------------------------------------------------------------------------- json
 
 
-def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, run_dir: Path) -> dict:
+def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source_name: str) -> dict:
   n = meta["action_dim"]
   obs_sizes = {
     "base_lin_vel": 3,
@@ -182,7 +211,7 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, run_di
   return {
     "robot": robot.name,
     "display_name": robot.display_name,
-    "source_run": run_dir.name,
+    "source_run": source_name,
     "files": {"scene": "scene.xml", "policy": "policy.onnx"},
     "sim": {
       "timestep": SIM_DT,
@@ -444,31 +473,39 @@ def render_preview(
 # --------------------------------------------------------------------------- main
 
 
-def export(
-  robot: RobotDef, run: str | None, out_root: Path, check: bool, gif: bool, seconds: float
-) -> Path:
-  run_dir = find_run_dir(robot, run)
-  onnx_src = sorted(run_dir.glob("*.onnx"))[-1]
-  print(f"== {robot.display_name}: {run_dir.name} / {onnx_src.name}")
+def write_bundle(
+  robot: RobotDef, onnx_src: Path, out: Path, source_name: str, copy_assets: bool = True
+) -> dict:
+  """Write a standalone bundle for ``onnx_src`` into ``out`` (replacing it). Returns policy.json."""
   meta = read_onnx_metadata(onnx_src)
   if list(meta["joint_names"]) != list(robot.joint_names):
     raise ValueError("policy joint order differs from robot.json joint order")
-
-  out = out_root / robot.name
   if out.exists():
     shutil.rmtree(out)
   out.mkdir(parents=True)
 
   spec = build_scene_spec(robot, meta)
   model = spec.compile()
-  # Point mesh assets at the bundle's own assets/ dir.
-  spec.meshdir = "assets"
+  if copy_assets:
+    spec.meshdir = "assets"
+    shutil.copytree(robot.dir / "assets", out / "assets")
+  else:  # scratch bundles (evals) just point at the repo's meshes
+    spec.meshdir = str(robot.dir / "assets")
   (out / "scene.xml").write_text(spec.to_xml())
-  shutil.copytree(robot.dir / "assets", out / "assets")
   shutil.copy2(onnx_src, out / "policy.onnx")
-  (out / "policy.json").write_text(
-    json.dumps(build_policy_json(robot, meta, model, run_dir), indent=2)
-  )
+  policy_json = build_policy_json(robot, meta, model, source_name)
+  (out / "policy.json").write_text(json.dumps(policy_json, indent=2))
+  return policy_json
+
+
+def export(
+  robot: RobotDef, run: str | None, out_root: Path, check: bool, gif: bool, seconds: float
+) -> Path:
+  run_dir = find_run_dir(robot, run)
+  onnx_src = sorted(run_dir.glob("*.onnx"))[-1]
+  print(f"== {robot.display_name}: {run_dir.name} / {onnx_src.name}")
+  out = out_root / robot.name
+  write_bundle(robot, onnx_src, out, run_dir.name)
   size_mb = sum(p.stat().st_size for p in out.rglob("*") if p.is_file()) / 1e6
   print(f"  wrote {out} ({size_mb:.1f} MB)")
 

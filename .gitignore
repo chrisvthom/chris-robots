@@ -17,3 +17,6 @@ outputs/
 .DS_Store
 ._*
 /tmp/
+
+# Eval videos (large)
+media/evals/

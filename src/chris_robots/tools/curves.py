@@ -23,6 +23,7 @@ COLUMNS = {
   "Episode_Reward/pose": "r_pose",
   "Episode_Reward/foot_clearance": "r_clear",
   "Episode_Reward/action_rate_l2": "r_actrate",
+  "Episode_Reward/air_time_biped": "r_airbip",
   "Train/mean_action_std": "act_std",
 }
 

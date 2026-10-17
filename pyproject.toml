@@ -31,6 +31,7 @@ render-robots = "chris_robots.tools.render:main"
 smoke-test = "chris_robots.tools.smoke_test:main"
 export-web = "chris_robots.tools.export_web:main"
 curves = "chris_robots.tools.curves:main"
+eval-video = "chris_robots.tools.eval_video:main"
 
 # Blackwell (RTX 50xx) needs CUDA 13 wheels for torch and warp. These mirror the
 # index setup mjlab itself uses for its `cu130` extra (uv sources are not transitive).
