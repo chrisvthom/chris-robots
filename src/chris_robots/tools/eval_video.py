@@ -125,22 +125,23 @@ def render_eval(
   m.vis.headlight.diffuse[:] = 0.75
   m.vis.headlight.specular[:] = 0.1
   renderer = mujoco.Renderer(m, height=height, width=width)
+  # Free camera that we re-aim at mid-body every frame (a tracking camera would look
+  # at the base, wasting half the frame above the head). Distance frames the whole
+  # robot with a 25% margin.
   cam = mujoco.MjvCamera()
-  cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-  cam.trackbodyid = runner.base_id
-  # Frame the whole robot: the tracking camera looks at the base, so the needed
-  # half-extent is the larger of base->floor and base->top-of-robot.
+  cam.type = mujoco.mjtCamera.mjCAMERA_FREE
   mujoco.mj_forward(m, d)
   robot_geoms = np.flatnonzero(m.geom_bodyid != 0)
   top = float(np.max(d.geom_xpos[robot_geoms, 2] + m.geom_rbound[robot_geoms]))
-  base_h = float(d.xpos[runner.base_id][2])
-  half = 1.35 * max(top - base_h, base_h)
-  cam.distance = half / math.tan(math.radians(m.vis.global_.fovy / 2))
+  mid_z = 0.5 * top
+  cam.distance = (0.625 * top) / math.tan(math.radians(m.vis.global_.fovy / 2))
   cam.azimuth, cam.elevation = 150, -10
+  lookat = np.array([0.0, 0.0, mid_z])
   font = ImageFont.truetype(FONT, 22)
   font_small = ImageFont.truetype(FONT, 17)
 
   frames: list[np.ndarray] = []
+  frame_meta: list[str] = []
   stats: dict[str, dict] = {}
   foot_sites = [
     mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"{s}_foot") for s in robot.foot_order
@@ -162,6 +163,9 @@ def render_eval(
       ):
         fell_at = t
       if i % every == 0:
+        # Smoothly follow the base in xy (first-order lag hides the step bobbing).
+        lookat[:2] += 0.25 * (runner.base_pos()[:2] - lookat[:2])
+        cam.lookat[:] = lookat
         renderer.update_scene(d, camera=cam)
         img = Image.fromarray(renderer.render())
         draw = ImageDraw.Draw(img)
@@ -173,6 +177,7 @@ def render_eval(
         if fell_at is not None:
           draw.text((width - 90, 6), "FELL", font=font, fill=(255, 80, 80))
         frames.append(np.asarray(img))
+        frame_meta.append(f"{label}  t={t:.1f}s")
     vel = np.array(seg_vel)
     disp = runner.base_pos()[:2] - start[:2]
     stats[label] = {
@@ -236,17 +241,22 @@ def render_eval(
       seg_bounds.append((acc, acc + n))
     acc += n
   per_seg = 3
+  bar = 34
   for a, b in seg_bounds:
     for j in range(per_seg):
-      k = a + (b - a) * (2 * j + 1) // (2 * per_seg)
-      sheet_frames.append(
-        Image.fromarray(frames[min(k, len(frames) - 1)]).crop((x0, 0, x0 + crop_w, height))
-      )
+      k = min(a + (b - a) * (2 * j + 1) // (2 * per_seg), len(frames) - 1)
+      crop = Image.fromarray(frames[k]).crop((x0, bar, x0 + crop_w, height))
+      draw = ImageDraw.Draw(crop)
+      draw.rectangle([0, crop.height - 28, crop_w, crop.height], fill=(0, 0, 0))
+      draw.text((8, crop.height - 24), frame_meta[k], font=font_small, fill=(230, 230, 230))
+      sheet_frames.append(crop)
   cols = per_seg * 2
   rows = (len(sheet_frames) + cols - 1) // cols
-  sheet = Image.new("RGB", (cols * crop_w, rows * height))
+  crop_h = height - bar
+  sheet = Image.new("RGB", (cols * crop_w, bar + rows * crop_h))
+  ImageDraw.Draw(sheet).text((10, 6), title, font=font, fill=(255, 255, 255))
   for i, f in enumerate(sheet_frames):
-    sheet.paste(f, ((i % cols) * crop_w, (i // cols) * height))
+    sheet.paste(f, ((i % cols) * crop_w, bar + (i // cols) * crop_h))
   sheet.save(out_stem.with_suffix(".png"))
 
   return {
