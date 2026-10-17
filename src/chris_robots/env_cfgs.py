@@ -97,6 +97,8 @@ def make_flat_env_cfg(
   twist.ranges.lin_vel_x = (-v, run)
   twist.ranges.lin_vel_y = (-0.6 * v, 0.6 * v)
   twist.ranges.ang_vel_z = (-w, w)
+  # More "stop" commands: braking from a sprint is where the small robots fall.
+  twist.rel_standing_envs = 0.2
 
   # ---- events (domain randomization) ---------------------------------------------
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = robot.foot_geoms
