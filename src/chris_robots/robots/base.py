@@ -83,30 +83,38 @@ DYNAMIC_POSTURE: dict[str, tuple[float, float]] = {
   r".*knee.*": (0.9, 1.4),
   r".*ankle.*": (0.3, 0.4),  # tighter: loose ankles let the policy stand on foot edges
   r".*shoulder_pitch.*": (0.8, 1.2),
-  r".*shoulder_roll.*": (0.3, 0.4),
-  r".*shoulder_yaw.*": (0.3, 0.4),
-  r".*elbow.*": (0.5, 0.8),
-  r".*wrist.*": (0.3, 0.4),
+  # Arms swing front/back only: lateral shoulder axes and wrists stay near default.
+  r".*shoulder_roll.*": (0.1, 0.12),
+  r".*shoulder_yaw.*": (0.1, 0.12),
+  r".*elbow.*": (0.5, 0.8),  # pitch-type elbows; lateral elbows are tightened in __post_init__
+  r".*wrist.*": (0.15, 0.2),
   r".*gripper.*": (0.05, 0.05),
 }
 _FALLBACK_POSTURE = (0.3, 0.5)
 STANDING_POSTURE_STD = 0.05
 
 
-def dynamic_posture(joint_names: tuple[str, ...], scale: float = 1.0) -> PostureStd:
-  """Build a PostureStd from DYNAMIC_POSTURE for exactly these joints."""
+def dynamic_posture(
+  joint_names: tuple[str, ...],
+  scale: float = 1.0,
+  overrides: dict[str, tuple[float, float]] | None = None,
+) -> PostureStd:
+  """Build a PostureStd (explicit per-joint keys) from DYNAMIC_POSTURE.
+
+  ``overrides`` maps exact joint names to (walking, running) stds and wins over the
+  regex table.
+  """
   walking: dict[str, float] = {}
   running: dict[str, float] = {}
-  for pattern, (w, r) in DYNAMIC_POSTURE.items():
-    if any(re.fullmatch(pattern, n) for n in joint_names):
-      walking[pattern] = w * scale
-      running[pattern] = r * scale
   for n in joint_names:
-    hits = [p for p in walking if re.fullmatch(p, n)]
-    if len(hits) > 1:
-      raise ValueError(f"joint {n} matches several posture patterns: {hits}")
-    if not hits:
-      walking[n], running[n] = _FALLBACK_POSTURE
+    if overrides and n in overrides:
+      w, r = overrides[n]
+    else:
+      hits = [p for p in DYNAMIC_POSTURE if re.fullmatch(p, n)]
+      if len(hits) > 1:
+        raise ValueError(f"joint {n} matches several posture patterns: {hits}")
+      w, r = DYNAMIC_POSTURE[hits[0]] if hits else _FALLBACK_POSTURE
+    walking[n], running[n] = w * scale, r * scale
   return PostureStd(standing={".*": STANDING_POSTURE_STD}, walking=walking, running=running)
 
 
@@ -180,7 +188,13 @@ class RobotDef:
     self.standing_height: float = float(self.info["standing_base_height_m"])
     self.display_name: str = self.info["display_name"]
     if self.posture is None:
-      self.posture = dynamic_posture(self.joint_names, self.posture_scale)
+      # Elbows that don't flex in the sagittal plane (axis not ~y) get the lateral
+      # treatment: they should stay still rather than flap sideways.
+      pitch_elbows = set(self.pitch_elbows())
+      overrides = {
+        n: (0.1, 0.12) for n in self.joint_names if "elbow" in n and n not in pitch_elbows
+      }
+      self.posture = dynamic_posture(self.joint_names, self.posture_scale, overrides)
     if self.gait_period is None:
       self.gait_period = 0.9 * math.sqrt(self.standing_height)
     if self.gait_period_run is None:
@@ -221,30 +235,61 @@ class RobotDef:
       out.append(tuple(float(x) for x in up))
     return tuple(out)
 
+  def _find_joint(self, side: str, part: str) -> str | None:
+    for n in self.joint_names:
+      if side in n and part in n:
+        return n
+    return None
+
+  def _axis_y(self, joint: str) -> float:
+    return float(self.info["joint_info"][joint]["world_axis_at_init"][1])
+
+  def pitch_elbows(self) -> tuple[str, ...]:
+    """Elbow joints whose axis is ~lateral (they flex in the sagittal plane)."""
+    return tuple(n for n in self.joint_names if "elbow" in n and abs(self._axis_y(n)) >= 0.7)
+
+  def lateral_arm_joints(self) -> tuple[str, ...]:
+    """Arm joints that move the arm sideways/twist it: should stay quiet while walking."""
+    pitch_elbows = set(self.pitch_elbows())
+    out = []
+    for n in self.joint_names:
+      if "shoulder_roll" in n or "shoulder_yaw" in n or "wrist" in n:
+        out.append(n)
+      elif "elbow" in n and n not in pitch_elbows:
+        out.append(n)
+    return tuple(out)
+
   def arm_swing_pairs(self) -> tuple[tuple[str, str, float, float], ...]:
     """(shoulder_pitch, opposite hip_pitch, shoulder sign, hip sign) per side.
 
     Signs are sign(world joint axis . y) at the init pose, so that
     ``-sign * (q - q_default)`` means "limb forward" for every pitch joint.
     """
-    info = self.info["joint_info"]
-
-    def find(side: str, part: str) -> str | None:
-      for n in self.joint_names:
-        if side in n and part in n:
-          return n
-      return None
-
     pairs = []
     for arm_side, leg_side in (("left", "right"), ("right", "left")):
-      sh, hip = find(arm_side, "shoulder_pitch"), find(leg_side, "hip_pitch")
+      sh = self._find_joint(arm_side, "shoulder_pitch")
+      hip = self._find_joint(leg_side, "hip_pitch")
       if sh is None or hip is None:
         return ()
-      s_sh = info[sh]["world_axis_at_init"][1]
-      s_hip = info[hip]["world_axis_at_init"][1]
+      s_sh, s_hip = self._axis_y(sh), self._axis_y(hip)
       if abs(s_sh) < 0.7 or abs(s_hip) < 0.7:
         return ()
       pairs.append((sh, hip, float(np.sign(s_sh)), float(np.sign(s_hip))))
+    return tuple(pairs)
+
+  def elbow_swing_pairs(self) -> tuple[tuple[str, str, float, float], ...]:
+    """(elbow, same-side shoulder_pitch, elbow sign, shoulder sign) for pitch-type elbows.
+
+    Convention as above: ``-sign * (q - q_default)`` = forearm/arm forward, so the
+    elbow flexes a little as the arm swings forward and extends on the back-swing.
+    """
+    pairs = []
+    for side in ("left", "right"):
+      el = self._find_joint(side, "elbow")
+      sh = self._find_joint(side, "shoulder_pitch")
+      if el is None or sh is None or el not in self.pitch_elbows() or abs(self._axis_y(sh)) < 0.7:
+        continue
+      pairs.append((el, sh, float(np.sign(self._axis_y(el))), float(np.sign(self._axis_y(sh)))))
     return tuple(pairs)
 
   @property

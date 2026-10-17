@@ -182,7 +182,9 @@ def render_eval(
 
     trace = gait.record(runner, cmd, duration, robot.foot_order, axis_y, on_step=on_step)
     t_base += duration
-    metrics = gait.analyze(trace, robot.foot_clearance, float(np.linalg.norm(cmd[:2])))
+    metrics = gait.analyze(
+      trace, robot.foot_clearance, float(np.linalg.norm(cmd[:2])), turning=abs(cmd[2]) > 0.1
+    )
     gait_rows.append((label, trace, metrics))
     disp = runner.base_pos()[:2] - start[:2]
     stats[label] = {

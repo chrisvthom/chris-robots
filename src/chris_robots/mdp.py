@@ -199,6 +199,17 @@ class arm_swing:
     self.hip_ids = torch.tensor(hip_ids, device=env.device)
     self.sh_sign = torch.tensor(sh_sign, device=env.device)
     self.hip_sign = torch.tensor(hip_sign, device=env.device)
+    # Optional elbow coupling: (elbow, same-side shoulder_pitch, elbow sign, shoulder sign).
+    el_ids, el_sh_ids, el_sign, el_sh_sign = [], [], [], []
+    for el, sh, s_el, s_sh in cfg.params.get("elbow_pairs", ()):
+      el_ids.append(asset.find_joints(el)[0][0])
+      el_sh_ids.append(asset.find_joints(sh)[0][0])
+      el_sign.append(float(s_el))
+      el_sh_sign.append(float(s_sh))
+    self.el_ids = torch.tensor(el_ids, device=env.device, dtype=torch.long)
+    self.el_sh_ids = torch.tensor(el_sh_ids, device=env.device, dtype=torch.long)
+    self.el_sign = torch.tensor(el_sign, device=env.device)
+    self.el_sh_sign = torch.tensor(el_sh_sign, device=env.device)
 
   def __call__(
     self,
@@ -208,18 +219,46 @@ class arm_swing:
     std: float,
     command_name: str,
     command_threshold: float,
+    elbow_pairs: tuple = (),
+    elbow_gain: float = 0.5,
   ) -> torch.Tensor:
-    del pairs  # Resolved in __init__.
+    del pairs, elbow_pairs  # Resolved in __init__.
     asset: Entity = env.scene["robot"]
     rel = asset.data.joint_pos - self.default
     fwd_arm = -self.sh_sign * rel[:, self.sh_ids]
     fwd_leg = -self.hip_sign * rel[:, self.hip_ids]
     err = fwd_arm - gain * fwd_leg
+    if len(self.el_ids):
+      fwd_forearm = -self.el_sign * rel[:, self.el_ids]
+      fwd_same_arm = -self.el_sh_sign * rel[:, self.el_sh_ids]
+      err = torch.cat([err, fwd_forearm - elbow_gain * fwd_same_arm], dim=1)
     reward = torch.exp(-torch.mean(err**2, dim=1) / std**2)
     command = env.command_manager.get_command(command_name)
     assert command is not None
     moving = (torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])) > command_threshold
     return reward * moving.float()
+
+
+class joint_deviation_l2:
+  """Mean squared deviation from the default pose over a set of joints (penalty).
+
+  Used to keep the lateral arm axes (shoulder roll/yaw, wrists, sideways elbows) quiet
+  so that arm motion reads as front/back swing rather than flapping.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene["robot"]
+    ids, _ = asset.find_joints(list(cfg.params["joint_names"]), preserve_order=True)
+    self.ids = torch.tensor(ids, device=env.device, dtype=torch.long)
+    default = asset.data.default_joint_pos
+    assert default is not None
+    self.default = default
+
+  def __call__(self, env: ManagerBasedRlEnv, joint_names: tuple[str, ...]) -> torch.Tensor:
+    del joint_names
+    asset: Entity = env.scene["robot"]
+    rel = asset.data.joint_pos[:, self.ids] - self.default[:, self.ids]
+    return torch.mean(rel**2, dim=1)
 
 
 def _moving(env: ManagerBasedRlEnv, command_name: str, threshold: float) -> torch.Tensor:

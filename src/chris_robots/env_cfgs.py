@@ -203,7 +203,19 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
         "std": 0.3,
         "command_name": "twist",
         "command_threshold": 0.1 * v,
+        # Elbows flex a little on the forward swing (pitch-type elbows only).
+        "elbow_pairs": robot.elbow_swing_pairs(),
+        "elbow_gain": 0.5,
       },
+    )
+  # Arms swing front/back, not sideways: penalise shoulder roll/yaw, wrist and
+  # sideways-elbow deviation from the default pose.
+  lateral = robot.lateral_arm_joints()
+  if lateral:
+    cfg.rewards["arm_lateral"] = RewardTermCfg(
+      func=chris_mdp.joint_deviation_l2,
+      weight=-2.0,
+      params={"joint_names": lateral},
     )
 
   # ---- curriculum: start at a jog, open up to the full sprint range early ----------

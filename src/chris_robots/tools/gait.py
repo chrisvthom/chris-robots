@@ -222,7 +222,9 @@ def _autocorr_period(x: np.ndarray, dt: float, tmin: float, tmax: float) -> floa
   return None
 
 
-def analyze(trace: GaitTrace, swing_target_m: float, speed_cmd: float) -> GaitMetrics:
+def analyze(
+  trace: GaitTrace, swing_target_m: float, speed_cmd: float, turning: bool = False
+) -> GaitMetrics:
   dt = trace.dt
   n = len(trace.t)
   seconds = n * dt
@@ -261,8 +263,17 @@ def analyze(trace: GaitTrace, swing_target_m: float, speed_cmd: float) -> GaitMe
     strides.append(float(np.mean(st)) if st else 0.0)
     swing_h.append(float(np.mean(sh)) if sh else 0.0)
     inc_mask = c
-    tilts.append(float(trace.tilt_deg[inc_mask, j].mean()) if inc_mask.any() else 0.0)
-    corner.append(float((trace.ncon[inc_mask, j] <= 1).mean()) if inc_mask.any() else 0.0)
+    # Sole tilt / corner contacts are judged over mid-stance only (central 60% of each
+    # stance phase): heel-strike and toe-off roll over an edge by design.
+    mid = np.zeros_like(c)
+    for inc, a, b in ph:
+      if inc and (b - a) * dt >= MIN_STANCE_S:
+        k = int(0.2 * (b - a))
+        mid[a + k : b - k] = True
+    if not mid.any():
+      mid = inc_mask
+    tilts.append(float(trace.tilt_deg[mid, j].mean()) if mid.any() else 0.0)
+    corner.append(float((trace.ncon[mid, j] <= 1).mean()) if mid.any() else 0.0)
     slip.append(float(trace.foot_vel_xy[inc_mask, j].mean()) if inc_mask.any() else 0.0)
 
   both = trace.contact.all(axis=1)
@@ -306,7 +317,7 @@ def analyze(trace: GaitTrace, swing_target_m: float, speed_cmd: float) -> GaitMe
       reasons.append(f"stance on tilted sole ({max(tilts):.0f} deg)")
     if max(corner) > 0.4:
       reasons.append(f"corner contacts ({max(corner):.2f})")
-    if strides[0] > 0 and strides[1] > 0:
+    if strides[0] > 0 and strides[1] > 0 and not turning:
       ratio = strides[0] / strides[1]
       if ratio < 0.7 or ratio > 1.4:
         reasons.append(f"asymmetric strides ({ratio:.2f})")
