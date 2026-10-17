@@ -23,4 +23,5 @@ ZBOT_V2 = RobotDef(
   push_vel=0.15,
   com_offset=0.01,
   hip_adduction_min=0.5,
+  arm_swing_gain=1.5,  # light arms: ask for a bigger swing so it reads on camera
 )

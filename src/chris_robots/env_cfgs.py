@@ -205,7 +205,7 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
       params={
         "pairs": pairs,
         "gain": robot.arm_swing_gain,
-        "std": 0.3,
+        "std": 0.2,
         "command_name": "twist",
         "command_threshold": 0.1 * v,
         # Elbows flex a little on the forward swing (pitch-type elbows only).
@@ -226,7 +226,7 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   # ---- curriculum: start at a jog, open up to the full sprint range early ----------
   cfg.curriculum["command_vel"].params["velocity_stages"] = [
     {"step": 0, "lin_vel_x": (-v, 0.5 * run), "ang_vel_z": (-w, w)},
-    {"step": 800 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
+    {"step": 400 * STEPS_PER_ITER, "lin_vel_x": (-v, run), "ang_vel_z": (-w, w)},
   ]
 
   # ---- play-mode overrides ---------------------------------------------------------
