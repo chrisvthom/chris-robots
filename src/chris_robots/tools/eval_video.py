@@ -25,6 +25,7 @@ from PIL import Image, ImageDraw, ImageFont
 from chris_robots import _REPO_ROOT
 from chris_robots.robots import ROBOTS_BY_NAME
 from chris_robots.robots.base import RobotDef
+from chris_robots.tools import gait
 from chris_robots.tools.export_web import BundleRunner, find_run_dir, write_bundle
 
 EVAL_CACHE = _REPO_ROOT / ".cache" / "eval"
@@ -146,50 +147,53 @@ def render_eval(
   frames: list[np.ndarray] = []
   frame_meta: list[str] = []
   stats: dict[str, dict] = {}
-  foot_sites = [
-    mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"{s}_foot") for s in robot.foot_order
-  ]
-  fell_at = None
-  t = 0.0
+  gait_rows: list[tuple[str, gait.GaitTrace, gait.GaitMetrics]] = []
+  axis_y = gait.joint_axis_y_from_info(robot.info)
+  fell_at: float | None = None
+  t_base = 0.0
   for label, duration, cmd in command_script(robot):
-    seg_vel, seg_clear = [], []
     start = runner.base_pos().copy()
-    n = int(duration / dt)
-    for i in range(n):
-      runner.step(cmd.astype(np.float32))
-      t += dt
-      seg_vel.append(d.sensordata[runner.velo][:2].copy())
-      seg_clear.append(max(d.site_xpos[s][2] for s in foot_sites))
+
+    def on_step(i: int, label=label, cmd=cmd, t_base=t_base) -> None:
+      nonlocal fell_at
+      t = t_base + (i + 1) * dt
       if fell_at is None and (
         runner.upright() < 0.5
         or runner.base_pos()[2] < 0.4 * runner.cfg["sim"]["standing_base_height_m"]
       ):
         fell_at = t
-      if i % every == 0:
-        # Smoothly follow the base in xy (first-order lag hides the step bobbing).
-        lookat[:2] += 0.25 * (runner.base_pos()[:2] - lookat[:2])
-        cam.lookat[:] = lookat
-        renderer.update_scene(d, camera=cam)
-        img = Image.fromarray(renderer.render())
-        draw = ImageDraw.Draw(img)
-        draw.rectangle([0, 0, width, 34], fill=(0, 0, 0))
-        draw.text((10, 6), title, font=font, fill=(255, 255, 255))
-        cmd_txt = f"{label}   cmd: vx={cmd[0]:+.2f} vy={cmd[1]:+.2f} wz={cmd[2]:+.2f}   t={t:4.1f}s"
-        draw.rectangle([0, height - 28, width, height], fill=(0, 0, 0))
-        draw.text((10, height - 24), cmd_txt, font=font_small, fill=(230, 230, 230))
-        if fell_at is not None:
-          draw.text((width - 90, 6), "FELL", font=font, fill=(255, 80, 80))
-        frames.append(np.asarray(img))
-        frame_meta.append(f"{label}  t={t:.1f}s")
-    vel = np.array(seg_vel)
+      if i % every:
+        return
+      # Smoothly follow the base in xy (first-order lag hides the step bobbing).
+      lookat[:2] += 0.25 * (runner.base_pos()[:2] - lookat[:2])
+      cam.lookat[:] = lookat
+      renderer.update_scene(d, camera=cam)
+      img = Image.fromarray(renderer.render())
+      draw = ImageDraw.Draw(img)
+      draw.rectangle([0, 0, width, 34], fill=(0, 0, 0))
+      draw.text((10, 6), title, font=font, fill=(255, 255, 255))
+      cmd_txt = f"{label}   cmd: vx={cmd[0]:+.2f} vy={cmd[1]:+.2f} wz={cmd[2]:+.2f}   t={t:4.1f}s"
+      draw.rectangle([0, height - 28, width, height], fill=(0, 0, 0))
+      draw.text((10, height - 24), cmd_txt, font=font_small, fill=(230, 230, 230))
+      if fell_at is not None:
+        draw.text((width - 90, 6), "FELL", font=font, fill=(255, 80, 80))
+      frames.append(np.asarray(img))
+      frame_meta.append(f"{label}  t={t:.1f}s")
+
+    trace = gait.record(runner, cmd, duration, robot.foot_order, axis_y, on_step=on_step)
+    t_base += duration
+    metrics = gait.analyze(trace, robot.foot_clearance, float(np.linalg.norm(cmd[:2])))
+    gait_rows.append((label, trace, metrics))
     disp = runner.base_pos()[:2] - start[:2]
     stats[label] = {
       "cmd": cmd.round(2).tolist(),
-      "mean_vel_b": vel.mean(0).round(2).tolist(),
+      "mean_vel_b": trace.base_vel_b[:, :2].mean(0).round(2).tolist(),
       "dist_m": float(np.linalg.norm(disp).round(2)),
-      "max_foot_clearance_m": float(np.max(seg_clear).round(3)),
+      "max_foot_clearance_m": float(trace.foot_pos[:, :, 2].max().round(3)),
+      "gait": metrics,
     }
   renderer.close()
+  gait.diagram(gait_rows, title).save(out_stem.parent / (out_stem.name + "_gait.png"))
 
   mp4 = out_stem.with_suffix(".mp4")
   proc = subprocess.Popen(
@@ -303,11 +307,15 @@ def main() -> None:
     fell = f"FELL at {res['fell_at_s']:.1f}s" if res["fell_at_s"] else "no fall"
     print(f"-- iteration {it}: {fell}")
     for label, s in res["segments"].items():
-      print(
-        f"     {label:16s} cmd={s['cmd']}  mean v_b={s['mean_vel_b']}  dist={s['dist_m']:.2f} m"
-        f"  max foot clearance={s['max_foot_clearance_m']:.3f} m"
-      )
-    print(f"     {Path(res['mp4']).relative_to(_REPO_ROOT)}  |  {Path(res['sheet']).name}")
+      print(f"     {label:16s} cmd={s['cmd']}  v_b={s['mean_vel_b']}  dist={s['dist_m']:.2f} m")
+      g: gait.GaitMetrics = s["gait"]
+      print(f"       {g.line()}")
+      if g.reasons:
+        print(f"       -> {'; '.join(g.reasons)}")
+    print(
+      f"     {Path(res['mp4']).relative_to(_REPO_ROOT)}  |  {Path(res['sheet']).name}"
+      f"  |  {Path(res['sheet']).stem}_gait.png"
+    )
 
 
 if __name__ == "__main__":

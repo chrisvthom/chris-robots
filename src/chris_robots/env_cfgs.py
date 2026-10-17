@@ -8,8 +8,9 @@ randomization) is scaled from the RobotDef so the same code serves a 1.4 m,
 
 from __future__ import annotations
 
-from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import ManagerBasedRlEnvCfg, mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import (
   ContactMatch,
@@ -140,37 +141,55 @@ def make_flat_env_cfg(robot: RobotDef, play: bool = False) -> ManagerBasedRlEnvC
   )
   cfg.rewards["action_rate_l2"].weight = -0.05
 
-  # Gait shaping. mjlab's defaults produce a fast double-support shuffle on flat box
-  # soles; these terms pay for lift, long single-stance phases and long strides.
-  assert robot.swing_time is not None and robot.stride_cap is not None
-  for name in ("foot_clearance", "foot_slip"):
-    cfg.rewards[name].params["asset_cfg"].site_names = robot.foot_sites
-  cfg.rewards["foot_clearance"].params["target_height"] = robot.foot_clearance
-  cfg.rewards["foot_clearance"].weight = -4.0
-  cfg.rewards["foot_swing_height"].params["target_height"] = robot.foot_clearance
-  cfg.rewards["foot_swing_height"].weight = -1.0
-  for name in ("foot_clearance", "foot_swing_height", "foot_slip", "soft_landing"):
+  # Gait: a phase clock prescribes *when* each foot is on the ground (left and right
+  # half a period apart, duty factor 0.6 walking -> 0.4 running) and how high the
+  # swing foot should arc. Free-form shaping terms (air time, stride length) were
+  # exploited: the policy planted one foot, hovered the other and skated on a foot
+  # corner. A schedule leaves no such option, and the gait's period/symmetry are then
+  # design parameters instead of emergent accidents.
+  left_index = robot.foot_order.index("left")
+  cfg.commands["gait_clock"] = chris_mdp.GaitClockCommandCfg(
+    walk_vel=v,
+    run_vel=run,
+    period_walk=robot.gait_period,
+    period_run=robot.gait_period_run,
+    duty_walk=0.6,
+    duty_run=0.4,
+    standing_threshold=0.1 * v,
+  )
+  for group in ("actor", "critic"):
+    cfg.observations[group].terms["gait_clock"] = ObservationTermCfg(
+      func=mdp.generated_commands, params={"command_name": "gait_clock"}
+    )
+  for name in ("foot_clearance", "foot_swing_height", "air_time"):
+    cfg.rewards.pop(name)
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = robot.foot_sites
+  cfg.rewards["foot_slip"].weight = -0.5
+  for name in ("foot_slip", "soft_landing"):
     cfg.rewards[name].params["command_threshold"] = 0.1 * v
-  cfg.rewards.pop("air_time")
-  cfg.rewards["air_time_biped"] = RewardTermCfg(
-    func=chris_mdp.feet_air_time_biped,
+  cfg.rewards["gait_schedule"] = RewardTermCfg(
+    func=chris_mdp.gait_contact_schedule,
     weight=2.0,
     params={
       "sensor_name": "feet_ground_contact",
-      "threshold": robot.swing_time,
-      "command_name": "twist",
-      "command_threshold": 0.1 * v,
+      "clock_name": "gait_clock",
+      "left_index": left_index,
     },
   )
-  cfg.rewards["stride"] = RewardTermCfg(
-    func=chris_mdp.stride,
-    weight=0.5,
+  cfg.rewards["gait_swing"] = RewardTermCfg(
+    func=chris_mdp.gait_swing_height,
+    weight=1.0,
     params={
-      "site_names": robot.foot_sites,
-      "cap": robot.stride_cap,
-      "command_name": "twist",
-      "command_threshold": 0.1 * v,
+      "sensor_name": "foot_height_scan",
+      "clock_name": "gait_clock",
+      "left_index": left_index,
+      "target_height": robot.foot_clearance,
     },
+  )
+  cfg.rewards["foot_flat"] = RewardTermCfg(
+    func=chris_mdp.foot_flat,
+    weight=-5.0,
+    params={"site_names": robot.foot_sites, "up_local": robot.foot_up_axes()},
   )
 
   pairs = robot.arm_swing_pairs() if robot.arm_swing_gain > 0 else ()

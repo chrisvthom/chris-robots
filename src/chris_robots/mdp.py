@@ -2,11 +2,174 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 import torch
 from mjlab.entity import Entity
 from mjlab.envs import ManagerBasedRlEnv
+from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.sensor import ContactSensor
+from mjlab.sensor import ContactSensor, TerrainHeightSensor
+from mjlab.utils.lab_api.math import quat_apply
+
+# ------------------------------------------------------------------ gait clock (phase)
+
+
+@dataclass(kw_only=True)
+class GaitClockCommandCfg(CommandTermCfg):
+  """A phase variable that drives a periodic contact schedule (Siekmann et al. 2021).
+
+  phi in [0, 1) advances by dt / period each step while a velocity is commanded and
+  freezes when standing. Left foot phase = phi, right foot phase = phi + 0.5. A foot
+  is scheduled to be in stance while its phase < duty. Period and duty interpolate
+  from the walk values to the run values as the commanded speed goes from walk_vel
+  to run_vel. The command exposed to the policy is [sin(2 pi phi), cos(2 pi phi)].
+  """
+
+  twist_name: str = "twist"
+  walk_vel: float = 0.8
+  run_vel: float = 2.5
+  period_walk: float = 0.9
+  period_run: float = 0.6
+  duty_walk: float = 0.6
+  duty_run: float = 0.4
+  standing_threshold: float = 0.08
+  resampling_time_range: tuple[float, float] = (1e9, 1e9)
+
+  def build(self, env: ManagerBasedRlEnv) -> GaitClockCommand:
+    return GaitClockCommand(self, env)
+
+
+class GaitClockCommand(CommandTerm):
+  cfg: GaitClockCommandCfg
+
+  def __init__(self, cfg: GaitClockCommandCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+    self.phase = torch.zeros(self.num_envs, device=self.device)
+    self.period = torch.full((self.num_envs,), cfg.period_walk, device=self.device)
+    self.duty = torch.full((self.num_envs,), cfg.duty_walk, device=self.device)
+    self.moving = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+    self._command = torch.zeros(self.num_envs, 2, device=self.device)
+    self._env_ref = env
+
+  @property
+  def command(self) -> torch.Tensor:
+    return self._command
+
+  def _update_metrics(self) -> None:
+    pass
+
+  def _resample_command(self, env_ids: torch.Tensor) -> None:
+    self.phase[env_ids] = torch.rand(len(env_ids), device=self.device)
+
+  def _update_command(self, env_ids: torch.Tensor | None) -> None:
+    twist = self._env_ref.command_manager.get_command(self.cfg.twist_name)
+    assert twist is not None
+    speed = torch.norm(twist[:, :2], dim=1) + 0.3 * torch.abs(twist[:, 2])
+    s = torch.clamp(
+      (speed - self.cfg.walk_vel) / max(1e-6, self.cfg.run_vel - self.cfg.walk_vel), 0.0, 1.0
+    )
+    self.period = self.cfg.period_walk + s * (self.cfg.period_run - self.cfg.period_walk)
+    self.duty = self.cfg.duty_walk + s * (self.cfg.duty_run - self.cfg.duty_walk)
+    self.moving = speed > self.cfg.standing_threshold
+    if env_ids is None:  # per-step path: advance the clock
+      dt = self._env_ref.step_dt
+      self.phase = torch.where(
+        self.moving, torch.remainder(self.phase + dt / self.period, 1.0), self.phase
+      )
+    two_pi_phi = 2.0 * math.pi * self.phase
+    self._command[:, 0] = torch.sin(two_pi_phi)
+    self._command[:, 1] = torch.cos(two_pi_phi)
+
+  def foot_phase(self, left_index: int) -> torch.Tensor:
+    """Per-foot phase [B, 2] in sensor order; the left foot gets offset 0."""
+    offsets = torch.tensor([0.0 if i == left_index else 0.5 for i in range(2)], device=self.device)
+    return torch.remainder(self.phase.unsqueeze(1) + offsets, 1.0)
+
+
+def _clock(env: ManagerBasedRlEnv, name: str) -> GaitClockCommand:
+  term = env.command_manager.get_term(name)
+  assert isinstance(term, GaitClockCommand)
+  return term
+
+
+def gait_contact_schedule(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  clock_name: str,
+  left_index: int,
+  margin: float = 0.03,
+) -> torch.Tensor:
+  """+1 per foot whose contact state matches the clock's stance/swing schedule.
+
+  Within ``margin`` (in phase units) of a transition either state is accepted.
+  While standing (clock not moving) the schedule is "both feet down".
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  assert sensor.data.current_contact_time is not None
+  in_contact = sensor.data.current_contact_time > 0.0  # [B, 2]
+  clock = _clock(env, clock_name)
+  phi = clock.foot_phase(left_index)
+  duty = clock.duty.unsqueeze(1)
+  sched_stance = phi < duty
+  near_edge = (torch.abs(phi - duty) < margin) | (phi < margin) | (phi > 1.0 - margin)
+  ok = (in_contact == sched_stance) | near_edge
+  moving = clock.moving.unsqueeze(1)
+  ok = torch.where(moving, ok, in_contact)
+  return ok.float().mean(dim=1)
+
+
+def gait_swing_height(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  clock_name: str,
+  left_index: int,
+  target_height: float,
+) -> torch.Tensor:
+  """Bell-shaped swing-foot height target over the scheduled swing phase."""
+  height_sensor: TerrainHeightSensor = env.scene[sensor_name]
+  h = height_sensor.data.heights  # [B, 2]
+  clock = _clock(env, clock_name)
+  phi = clock.foot_phase(left_index)
+  duty = clock.duty.unsqueeze(1)
+  u = torch.clamp((phi - duty) / torch.clamp(1.0 - duty, min=1e-3), 0.0, 1.0)
+  target = target_height * torch.sin(math.pi * u)
+  in_swing = (phi >= duty) & clock.moving.unsqueeze(1)
+  err = torch.square(h - target) / (0.5 * target_height) ** 2
+  r = torch.exp(-err) * in_swing.float()
+  return r.sum(dim=1) / torch.clamp(in_swing.float().sum(dim=1), min=1.0)
+
+
+class foot_flat:
+  """Penalise sole tilt: 1 - (sole up-axis . world z), averaged over both feet.
+
+  The up axis is read off the foot sites' orientation at the init pose, so it works
+  for any foot frame convention.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene["robot"]
+    ids, _ = asset.find_sites(list(cfg.params["site_names"]), preserve_order=True)
+    self.site_ids = torch.tensor(ids, device=env.device)
+    # World-up expressed in each site's frame at the init pose (computed offline by
+    # the env config from the MuJoCo model, since entity data may not be valid yet).
+    self.up_local = torch.tensor(cfg.params["up_local"], device=env.device, dtype=torch.float32)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    site_names: tuple[str, ...],
+    up_local: tuple,
+    angle_scale: float = 1.0,
+  ) -> torch.Tensor:
+    del site_names, up_local
+    asset: Entity = env.scene["robot"]
+    q = asset.data.site_quat_w[:, self.site_ids]  # [B, 2, 4]
+    up_w = quat_apply(q.reshape(-1, 4), self.up_local.repeat(q.shape[0], 1)).reshape(
+      q.shape[0], -1, 3
+    )
+    return (1.0 - up_w[..., 2]).mean(dim=1) * angle_scale
 
 
 class arm_swing:

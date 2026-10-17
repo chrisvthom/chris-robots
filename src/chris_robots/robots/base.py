@@ -81,7 +81,7 @@ DYNAMIC_POSTURE: dict[str, tuple[float, float]] = {
   r".*hip_roll.*": (0.3, 0.4),
   r".*hip_yaw.*": (0.3, 0.4),
   r".*knee.*": (0.9, 1.4),
-  r".*ankle.*": (0.5, 0.7),
+  r".*ankle.*": (0.3, 0.4),  # tighter: loose ankles let the policy stand on foot edges
   r".*shoulder_pitch.*": (0.8, 1.2),
   r".*shoulder_roll.*": (0.3, 0.4),
   r".*shoulder_yaw.*": (0.3, 0.4),
@@ -143,12 +143,11 @@ class RobotDef:
   lean_at_run: float = 0.2
   """Forward torso lean (rad) rewarded at max_lin_vel, scaled linearly with the
   commanded forward speed."""
-  swing_time: float | None = None
-  """Single-stance duration rewarded by the biped air-time term (s). None ->
-  0.55 * sqrt(standing_height)."""
-  stride_cap: float | None = None
-  """Fore-aft foot separation at which the stride reward saturates (m). None ->
-  0.5 * standing_height."""
+  gait_period: float | None = None
+  """Gait clock period while walking (s, one full left+right cycle). None ->
+  0.9 * sqrt(standing_height) (Froude scaling of a human ~0.9 s stride at 1 m hip)."""
+  gait_period_run: float | None = None
+  """Gait clock period at max_lin_vel. None -> 0.65 * gait_period."""
   hip_adduction_min: float = 0.0
   """Sim-only: widen the adduction side (the smaller side) of every hip-roll joint range
   to at least this many radians. Several of these robots only allow 0.1-0.2 rad of
@@ -182,10 +181,10 @@ class RobotDef:
     self.display_name: str = self.info["display_name"]
     if self.posture is None:
       self.posture = dynamic_posture(self.joint_names, self.posture_scale)
-    if self.swing_time is None:
-      self.swing_time = 0.55 * math.sqrt(self.standing_height)
-    if self.stride_cap is None:
-      self.stride_cap = 0.5 * self.standing_height
+    if self.gait_period is None:
+      self.gait_period = 0.9 * math.sqrt(self.standing_height)
+    if self.gait_period_run is None:
+      self.gait_period_run = 0.65 * self.gait_period
     if self.init_bend is not None:
       # Re-derive the knees-bent init pose with a different bend (lazy import: the
       # importer module imports this package).
@@ -207,6 +206,20 @@ class RobotDef:
       if model.jnt_type[i] == mujoco.mjtJoint.mjJNT_HINGE:
         qpos.append(joint_pos.get(model.joint(i).name, 0.0))
     return qpos
+
+  def foot_up_axes(self) -> tuple[tuple[float, float, float], ...]:
+    """World-up expressed in each foot site's frame at the init pose (foot_order)."""
+    model = mujoco.MjModel.from_xml_path(str(self.xml))
+    data = mujoco.MjData(model)
+    data.qpos[:] = self.init_qpos(model)
+    mujoco.mj_forward(model, data)
+    out = []
+    for name in self.foot_sites:
+      sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
+      R = data.site_xmat[sid].reshape(3, 3)
+      up = R.T @ np.array([0.0, 0.0, 1.0])
+      out.append(tuple(float(x) for x in up))
+    return tuple(out)
 
   def arm_swing_pairs(self) -> tuple[tuple[str, str, float, float], ...]:
     """(shoulder_pitch, opposite hip_pitch, shoulder sign, hip sign) per side.

@@ -182,6 +182,7 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
     "joint_vel": n,
     "actions": n,
     "command": 3,
+    "gait_clock": 2,
   }
   layout, offset = [], 0
   for name, scale, hist, clip in zip(
@@ -263,6 +264,19 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
       },
       "suggested_walk": [v, 0.0, 0.0],
     },
+    "gait_clock": {
+      "note": (
+        "phi advances by control_dt / period each control step while "
+        "speed = |cmd_xy| + 0.3*|cmd_wz| > standing_threshold, else holds. "
+        "s = clamp((speed - walk_vel) / (run_vel - walk_vel), 0, 1); "
+        "period = lerp(period_walk, period_run, s). Observation = [sin(2 pi phi), cos(2 pi phi)]."
+      ),
+      "walk_vel": v,
+      "run_vel": run,
+      "period_walk": robot.gait_period,
+      "period_run": robot.gait_period_run,
+      "standing_threshold": 0.1 * v,
+    },
   }
 
 
@@ -304,6 +318,19 @@ class BundleRunner:
     )
     mujoco.mj_forward(self.model, self.data)
     self.last_action = np.zeros_like(self.default)
+    self.phase = 0.0
+
+  def advance_clock(self, command: np.ndarray) -> None:
+    """Gait clock, mirrored from chris_robots.mdp.GaitClockCommand."""
+    gc = self.cfg.get("gait_clock")
+    if gc is None:
+      return
+    speed = float(np.linalg.norm(command[:2]) + 0.3 * abs(command[2]))
+    if speed <= gc["standing_threshold"]:
+      return
+    s = float(np.clip((speed - gc["walk_vel"]) / max(1e-6, gc["run_vel"] - gc["walk_vel"]), 0, 1))
+    period = gc["period_walk"] + s * (gc["period_run"] - gc["period_walk"])
+    self.phase = (self.phase + self.cfg["sim"]["control_dt"] / period) % 1.0
 
   def observe(self, command: np.ndarray) -> np.ndarray:
     d = self.data
@@ -319,6 +346,9 @@ class BundleRunner:
       "joint_vel": d.qvel[self.qvel_adr],
       "actions": self.last_action,
       "command": command,
+      "gait_clock": np.array(
+        [np.sin(2 * np.pi * self.phase), np.cos(2 * np.pi * self.phase)], dtype=np.float32
+      ),
     }
     obs = np.zeros(self.cfg["policy"]["obs_dim"], dtype=np.float32)
     for term in self.cfg["policy"]["observation_layout"]:
@@ -328,6 +358,7 @@ class BundleRunner:
     return obs
 
   def step(self, command: np.ndarray) -> None:
+    self.advance_clock(command)
     obs = self.observe(command)
     action = self.sess.run(None, {self.cfg["policy"]["input"]: obs[None]})[0][0]
     self.last_action = action
