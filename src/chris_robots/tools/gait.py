@@ -313,12 +313,16 @@ def analyze(
   else:
     alt = 0.0
 
-  period = _autocorr_period(trace.hip_pitch[:, 0], dt, 0.25, 1.6)
+  # Period / symmetry from the hip-pitch trajectories, skipping the first 0.5 s of the
+  # segment (transient after a command change).
+  skip = min(int(0.5 / dt), max(0, n - int(2.0 / dt)))
+  hp = trace.hip_pitch[skip:]
+  period = _autocorr_period(hp[:, 0], dt, 0.25, 1.6)
   sym = None
   if period is not None:
     half = int(round(period / 2 / dt))
-    L = trace.hip_pitch[:, 0] - trace.hip_pitch[:, 0].mean()
-    R = trace.hip_pitch[:, 1] - trace.hip_pitch[:, 1].mean()
+    L = hp[:, 0] - hp[:, 0].mean()
+    R = hp[:, 1] - hp[:, 1].mean()
     if half < len(L) - 10 and np.std(L) > 1e-4 and np.std(R) > 1e-4:
       a, b = L[half:], R[: len(R) - half]
       sym = float(np.corrcoef(a, b)[0, 1])

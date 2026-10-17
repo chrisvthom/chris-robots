@@ -1,6 +1,8 @@
 <mujoco model="kbot scene">
   <compiler angle="radian" meshdir="assets/"/>
 
+  <option timestep="0.005" integrator="implicitfast" iterations="10" ls_iterations="20" ccd_iterations="50"/>
+
   <size nkey="1"/>
 
   <visual>
@@ -201,16 +203,16 @@
     <general name="dof_left_shoulder_yaw_02" joint="dof_left_shoulder_yaw_02" ctrllimited="false" ctrlrange="-2.37575 2.37575" forcelimited="true" forcerange="-11.9 11.9" biastype="affine" gainprm="16.581" biasprm="0 -16.581 -1.056"/>
     <general name="dof_left_elbow_02" joint="dof_left_elbow_02" ctrllimited="false" ctrlrange="-3.19606 0.717689" forcelimited="true" forcerange="-11.9 11.9" biastype="affine" gainprm="16.581" biasprm="0 -16.581 -1.056"/>
     <general name="dof_left_wrist_00" joint="dof_left_wrist_00" ctrllimited="false" ctrlrange="-4.2276 4.2276" forcelimited="true" forcerange="-9.8 9.8" biastype="affine" gainprm="3.948" biasprm="0 -3.948 -0.251"/>
-    <general name="dof_right_hip_pitch_04" joint="dof_right_hip_pitch_04" ctrllimited="false" ctrlrange="-2.7485 1.57913" forcelimited="true" forcerange="-84 84" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
-    <general name="dof_right_hip_roll_03" joint="dof_right_hip_roll_03" ctrllimited="false" ctrlrange="-3.02884 1.25991" forcelimited="true" forcerange="-120 120" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
-    <general name="dof_right_hip_yaw_03" joint="dof_right_hip_yaw_03" ctrllimited="false" ctrlrange="-2.10273 2.10273" forcelimited="true" forcerange="-42 42" biastype="affine" gainprm="78.957" biasprm="0 -78.957 -5.027"/>
-    <general name="dof_right_knee_04" joint="dof_right_knee_04" ctrllimited="false" ctrlrange="-3.2372 0.531935" forcelimited="true" forcerange="-84 84" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
-    <general name="dof_right_ankle_02" joint="dof_right_ankle_02" ctrllimited="false" ctrlrange="-0.7335 1.76324" forcelimited="true" forcerange="-60 60" biastype="affine" gainprm="118.435" biasprm="0 -118.435 -7.54"/>
-    <general name="dof_left_hip_pitch_04" joint="dof_left_hip_pitch_04" ctrllimited="false" ctrlrange="-1.57913 2.7485" forcelimited="true" forcerange="-84 84" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
-    <general name="dof_left_hip_roll_03" joint="dof_left_hip_roll_03" ctrllimited="false" ctrlrange="-1.25991 3.02884" forcelimited="true" forcerange="-120 120" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
-    <general name="dof_left_hip_yaw_03" joint="dof_left_hip_yaw_03" ctrllimited="false" ctrlrange="-2.10273 2.10273" forcelimited="true" forcerange="-42 42" biastype="affine" gainprm="78.957" biasprm="0 -78.957 -5.027"/>
-    <general name="dof_left_knee_04" joint="dof_left_knee_04" ctrllimited="false" ctrlrange="-0.531935 3.2372" forcelimited="true" forcerange="-84 84" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
-    <general name="dof_left_ankle_02" joint="dof_left_ankle_02" ctrllimited="false" ctrlrange="-1.76324 0.7335" forcelimited="true" forcerange="-60 60" biastype="affine" gainprm="118.435" biasprm="0 -118.435 -7.54"/>
+    <general name="dof_right_hip_pitch_04" joint="dof_right_hip_pitch_04" ctrllimited="false" ctrlrange="-3.0398 1.87043" forcelimited="true" forcerange="-130 130" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
+    <general name="dof_right_hip_roll_03" joint="dof_right_hip_roll_03" ctrllimited="false" ctrlrange="-3.15549 1.38656" forcelimited="true" forcerange="-140 140" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
+    <general name="dof_right_hip_yaw_03" joint="dof_right_hip_yaw_03" ctrllimited="false" ctrlrange="-2.3307 2.3307" forcelimited="true" forcerange="-60 60" biastype="affine" gainprm="78.957" biasprm="0 -78.957 -5.027"/>
+    <general name="dof_right_knee_04" joint="dof_right_knee_04" ctrllimited="false" ctrlrange="-3.52849 0.823233" forcelimited="true" forcerange="-130 130" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
+    <general name="dof_right_ankle_02" joint="dof_right_ankle_02" ctrllimited="false" ctrlrange="-0.902369 1.93211" forcelimited="true" forcerange="-80 80" biastype="affine" gainprm="118.435" biasprm="0 -118.435 -7.54"/>
+    <general name="dof_left_hip_pitch_04" joint="dof_left_hip_pitch_04" ctrllimited="false" ctrlrange="-1.87043 3.0398" forcelimited="true" forcerange="-130 130" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
+    <general name="dof_left_hip_roll_03" joint="dof_left_hip_roll_03" ctrllimited="false" ctrlrange="-1.38656 3.15549" forcelimited="true" forcerange="-140 140" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
+    <general name="dof_left_hip_yaw_03" joint="dof_left_hip_yaw_03" ctrllimited="false" ctrlrange="-2.3307 2.3307" forcelimited="true" forcerange="-60 60" biastype="affine" gainprm="78.957" biasprm="0 -78.957 -5.027"/>
+    <general name="dof_left_knee_04" joint="dof_left_knee_04" ctrllimited="false" ctrlrange="-0.823233 3.52849" forcelimited="true" forcerange="-130 130" biastype="affine" gainprm="157.914" biasprm="0 -157.914 -10.053"/>
+    <general name="dof_left_ankle_02" joint="dof_left_ankle_02" ctrllimited="false" ctrlrange="-1.93211 0.902369" forcelimited="true" forcerange="-80 80" biastype="affine" gainprm="118.435" biasprm="0 -118.435 -7.54"/>
   </actuator>
 
   <sensor>
@@ -222,6 +224,6 @@
   </sensor>
 
   <keyframe>
-    <key name="init_state" qpos="0 0 0.9989 1 0 0 0 0 0 0 0.6 0 0 0 0 -0.6 0 -0.25 0 0 -0.5 0.25 0.25 0 0 0.5 -0.25" ctrl="0 0 0 0.6 0 0 0 0 -0.6 0 -0.25 0 0 -0.5 0.25 0.25 0 0 0.5 -0.25"/>
+    <key name="init_state" qpos="0 0 1.0077 1 0 0 0 0 0 0 0.6 0 0 0 0 -0.6 0 -0.15 0 0 -0.3 0.15 0.15 0 0 0.3 -0.15" ctrl="0 0 0 0.6 0 0 0 0 -0.6 0 -0.15 0 0 -0.3 0.15 0.15 0 0 0.3 -0.15"/>
   </keyframe>
 </mujoco>
