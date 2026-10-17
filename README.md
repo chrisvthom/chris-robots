@@ -25,8 +25,10 @@ robots/<name>/          MJCF model (<name>.xml), standalone scene.xml, meshes, r
 src/chris_robots/
   robots/<name>.py      actuator gains, posture tolerances, speed ranges per robot
   env_cfgs.py           mjlab velocity task config, scaled by robot size
-  rl_cfg.py             PPO config
-  tools/                import-robots, render-robots, smoke-test, export-web, curves
+  rl_cfg.py             PPO config (+ -Sym variants with mirror augmentation)
+  mdp.py                gait clock, schedule/swing/flat-foot/arm rewards
+  symmetry.py           left/right mirror map for rsl-rl's Symmetry extension
+  tools/                import-robots, render-robots, smoke-test, eval-video, export-web, curves
 policies/<name>/        exported bundle: scene.xml + assets + policy.onnx + policy.json + preview
 media/                  renders
 ```
@@ -45,8 +47,9 @@ uv run list-envs | grep Chris                       # Chris-Velocity-Flat-<Robot
 ## Train / play / export
 
 ```sh
-uv run train Chris-Velocity-Flat-Kbot --env.scene.num-envs 4096 --agent.run-name v1
+uv run train Chris-Velocity-Flat-Kbot-Sym --env.scene.num-envs 4096 --agent.run-name v1
 uv run curves kbot                                  # training curves as a table
+MUJOCO_GL=egl uv run eval-video kbot                # mp4 + contact sheet + gait analysis per checkpoint
 uv run play Chris-Velocity-Flat-Kbot                # interactive viewer (latest checkpoint)
 MUJOCO_GL=egl uv run export-web kbot --preview      # policies/kbot/, verified with plain mujoco + onnxruntime
 ```
@@ -63,12 +66,47 @@ runner exports an ONNX policy with every checkpoint.
 * `policy.onnx`: actor MLP with its observation normalizer baked in. `obs[1, N] -> actions[1, A]`.
 * `policy.json`: everything needed to build the observation vector and apply actions:
   observation layout (`base_lin_vel`, `base_ang_vel`, `projected_gravity`,
-  `joint_pos - default`, `joint_vel`, `last_action`, `command`), joint order and qpos/qvel
-  addresses, default pose, gains, action scale, sim timestep (0.005 s, 4 substeps per
-  50 Hz policy step), and command ranges.
+  `joint_pos - default`, `joint_vel`, `last_action`, `command`, `gait_clock`), joint order
+  and qpos/qvel addresses, default pose, gains, action scale, sim timestep (0.005 s,
+  4 substeps per 50 Hz policy step), command ranges and the gait-clock parameters.
 
-`chris_robots.tools.export_web.BundleRunner` is a 60-line reference implementation of
-the runtime; `export-web` runs it after every export to make sure the bundle walks.
+The `gait_clock` observation is `[sin 2πφ, cos 2πφ]` of a phase φ the runtime advances
+itself: `φ += dt / period` whenever the commanded speed is above
+`gait_clock.standing_threshold`, where `period` interpolates linearly from
+`period_walk` at `walk_vel` to `period_run` at `run_vel` (speed = |v_xy| + 0.3 |ω_z|).
+The clock is what gives the gait its rhythm; the policy was trained with left-foot
+stance at φ ∈ [0, duty) and right-foot stance half a cycle later.
+
+`chris_robots.tools.export_web.BundleRunner` is a ~80-line reference implementation of
+the runtime (including the clock); `export-web` runs it after every export to make sure
+the bundle walks.
+
+## Gait design
+
+The gaits are plain PPO (rsl-rl) on mjlab's velocity task, with the default reward set
+replaced by a small "animated character" set, see `src/chris_robots/env_cfgs.py`:
+
+* **Phase clock** (Siekmann et al. 2021): a `gait_clock` command term drives a periodic
+  contact schedule reward (each foot in contact when its phase says stance) and a
+  bell-shaped swing-height target. Walking is 60 % stance; running is 40 % with a
+  flight phase. Period scales with commanded speed.
+* **Posture**: loose per-joint tolerances on hip/knee/shoulder pitch (big strides, big arm
+  swing), tight tolerances on the lateral axes (hip roll/yaw, shoulder roll/yaw, wrists),
+  plus a forward torso lean that grows with speed.
+* **Arm swing**: contralateral shoulder pitch follows the opposite hip; pitch-type elbows
+  flex on the forward swing. A lateral-deviation penalty keeps the arms moving
+  front/back rather than flapping.
+* **Feet**: stance-sole tilt penalty (beyond 3°) and foot-slip penalty; no air-time or
+  stride rewards (those were exploited as "hover one foot and skate on the other").
+* **Symmetry**: the `-Sym` task variants add rsl-rl's mirror data augmentation and mirror
+  loss. The left/right mapping is derived from the MuJoCo joint axes
+  (`src/chris_robots/symmetry.py`) and checked against physically mirrored states.
+
+`uv run eval-video <robot>` renders a scripted stand / walk / turn / sidestep / jog / sprint
+sequence for a few checkpoints and prints a gait analysis per segment (steps, duty,
+alternation, stride, swing height, mid-stance sole tilt, corner contacts, period,
+left/right symmetry, arm swing amplitudes) with a WALK / GLITCH / FELL verdict, plus a
+gait diagram (`*_gait.png`). This is how the policies above were judged.
 
 ## Modelling notes
 
