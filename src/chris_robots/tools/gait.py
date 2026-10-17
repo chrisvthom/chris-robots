@@ -14,6 +14,7 @@ draws the classic gait diagram.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import mujoco
@@ -40,6 +41,7 @@ class GaitTrace:
   base_vel_b: np.ndarray  # [T, 3]
   hip_pitch: np.ndarray  # [T, 2] (left, right), sign-normalised so + = thigh forward
   knee: np.ndarray  # [T, 2] |flexion|
+  base_rpy: np.ndarray  # [T, 3] roll, pitch, yaw of the base (rad)
   arm_pitch: np.ndarray  # [T, 2] shoulder pitch deviation from default (rad)
   arm_lateral: np.ndarray  # [T] RMS over shoulder roll/yaw + wrist deviation (rad)
   elbow: np.ndarray  # [T, 2] elbow deviation from default (rad)
@@ -67,6 +69,11 @@ class GaitMetrics:
   symmetry: float | None  # L/R hip-pitch correlation at half-period lag (1 = perfect)
   action_rate: float
   mean_speed: float
+  roll_sway_deg: float  # torso roll amplitude (sqrt2 * RMS of detrended roll)
+  yaw_sway_deg: float  # torso yaw oscillation amplitude about the heading trend
+  bob_m: float  # base height peak-to-peak (after the first 0.5 s)
+  step_width_m: float  # mean lateral foot separation at touchdown (heading frame)
+  sharpness: float  # RMS hip-pitch angular acceleration (rad/s^2) - "jerkiness"
   arm_swing_rad: float  # RMS shoulder-pitch deviation (front/back swing amplitude)
   arm_lateral_rad: float  # RMS lateral arm deviation (roll/yaw/wrist) - should be small
   elbow_rad: float  # RMS elbow deviation
@@ -86,6 +93,8 @@ class GaitMetrics:
       f"  corner {s.corner_frac[0]:.2f}/{s.corner_frac[1]:.2f}  slip {s.slip_mps[0]:.2f}/{s.slip_mps[1]:.2f}"
       f"  T {per}  sym {sym}  act_rate {s.action_rate:.2f}"
       f"  arms fb/lat/elbow {s.arm_swing_rad:.2f}/{s.arm_lateral_rad:.2f}/{s.elbow_rad:.2f}"
+      f"  torso roll/yaw {s.roll_sway_deg:.1f}/{s.yaw_sway_deg:.1f} deg  bob {s.bob_m * 100:.1f} cm"
+      f"  width {s.step_width_m * 100:.0f} cm  sharp {s.sharpness:.0f}"
     )
 
 
@@ -147,6 +156,7 @@ def record(
   fvel = np.zeros((n, 2))
   bpos = np.zeros((n, 3))
   bvel = np.zeros((n, 3))
+  brpy = np.zeros((n, 3))
   hip = np.zeros((n, 2))
   knee = np.zeros((n, 2))
   arm_pitch = np.zeros((n, 2))
@@ -176,6 +186,7 @@ def record(
       fvel[k] = np.linalg.norm((fpos[k, :, :2] - fpos[k - 1, :, :2]) / dt, axis=1)
     bpos[k] = d.xpos[runner.base_id]
     bvel[k] = d.sensordata[runner.velo]
+    brpy[k] = _quat_to_rpy(d.xquat[runner.base_id])
     q = d.qpos[runner.qpos_adr] - runner.default
     for j in range(2):
       if hip_idx[j] is not None:
@@ -204,6 +215,7 @@ def record(
     foot_vel_xy=fvel,
     base_pos=bpos,
     base_vel_b=bvel,
+    base_rpy=brpy,
     hip_pitch=hip,
     knee=knee,
     arm_pitch=arm_pitch,
@@ -228,6 +240,14 @@ def _phases(contact_1d: np.ndarray, dt: float) -> list[tuple[bool, int, int]]:
       start = i
   del dt
   return out
+
+
+def _quat_to_rpy(q: np.ndarray) -> np.ndarray:
+  w, x, y, z = q
+  roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+  pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+  yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+  return np.array([roll, pitch, yaw])
 
 
 def _autocorr_period(x: np.ndarray, dt: float, tmin: float, tmax: float) -> float | None:
@@ -334,6 +354,28 @@ def analyze(
   duty = (float(trace.contact[:, 0].mean()), float(trace.contact[:, 1].mean()))
   mean_speed = float(np.linalg.norm(trace.base_vel_b[:, :2].mean(0)))
 
+  # Torso motion: roll / yaw oscillation about a linear trend, vertical bob, step width.
+  rpy = trace.base_rpy[skip:]
+  tt = np.arange(len(rpy)) * dt
+  roll_d = rpy[:, 0] - np.polyval(np.polyfit(tt, rpy[:, 0], 1), tt) if len(tt) > 2 else rpy[:, 0]
+  yaw_u = np.unwrap(rpy[:, 2])
+  yaw_d = yaw_u - np.polyval(np.polyfit(tt, yaw_u, 1), tt) if len(tt) > 2 else yaw_u
+  roll_amp = float(np.degrees(np.sqrt(2.0) * np.sqrt(np.mean(roll_d**2))))
+  yaw_amp = float(np.degrees(np.sqrt(2.0) * np.sqrt(np.mean(yaw_d**2))))
+  z = trace.base_pos[skip:, 2]
+  bob = float(z.max() - z.min()) if len(z) else 0.0
+  widths = []
+  for t_td, j in touchdowns:
+    k = int(round(t_td / dt))
+    k = min(max(k, 0), n - 1)
+    psi = trace.base_rpy[k, 2]
+    delta = trace.foot_pos[k, j, :2] - trace.foot_pos[k, 1 - j, :2]
+    widths.append(abs(-math.sin(psi) * delta[0] + math.cos(psi) * delta[1]))
+  step_width = float(np.mean(widths)) if widths else 0.0
+  hp_all = trace.hip_pitch
+  acc = np.diff(hp_all, n=2, axis=0) / dt**2 if len(hp_all) > 2 else np.zeros((1, 2))
+  sharp = float(np.sqrt(np.mean(acc**2)))
+
   reasons = []
   min_steps = max(2, int(seconds * 0.8))  # a real gait makes >= ~1 step/s/foot
   if trace.fell_at is not None:
@@ -381,6 +423,11 @@ def analyze(
     symmetry=sym,
     action_rate=float(trace.action_rate.mean()),
     mean_speed=mean_speed,
+    roll_sway_deg=roll_amp,
+    yaw_sway_deg=yaw_amp,
+    bob_m=bob,
+    step_width_m=step_width,
+    sharpness=sharp,
     arm_swing_rad=float(np.sqrt(np.mean(trace.arm_pitch**2))),
     arm_lateral_rad=float(np.sqrt(np.mean(trace.arm_lateral**2))),
     elbow_rad=float(np.sqrt(np.mean(trace.elbow**2))),

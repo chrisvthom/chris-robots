@@ -276,6 +276,11 @@ def build_policy_json(robot: RobotDef, meta: dict, model: mujoco.MjModel, source
       "period_walk": robot.gait_period,
       "period_run": robot.gait_period_run,
       "standing_threshold": 0.1 * v,
+      "period_scale_range": [0.9, 1.1],
+      "period_scale_note": (
+        "Training randomised the period by this factor per episode; the policy follows "
+        "whatever clock it is given, so a runtime may vary the scale for gait variety."
+      ),
     },
   }
 
