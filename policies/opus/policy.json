@@ -1,0 +1,321 @@
+{
+  "robot": "opus",
+  "display_name": "Opus",
+  "source_run": "2026-10-16_21-10-42_v4_soft2",
+  "files": {
+    "scene": "scene.xml",
+    "policy": "policy.onnx"
+  },
+  "sim": {
+    "timestep": 0.005,
+    "decimation": 4,
+    "control_dt": 0.02,
+    "keyframe": "init_state",
+    "base_body": "base",
+    "standing_base_height_m": 0.3181
+  },
+  "sensors": {
+    "base_lin_vel": "imu_lin_vel",
+    "base_ang_vel": "imu_ang_vel",
+    "note": "projected_gravity = R_base^T * [0,0,-1]; read the base orientation from the freejoint quaternion"
+  },
+  "joints": {
+    "names": [
+      "right_shoulder_pitch",
+      "right_shoulder_yaw",
+      "right_elbow_yaw",
+      "left_shoulder_pitch",
+      "left_shoulder_yaw",
+      "left_elbow_yaw",
+      "right_hip_pitch",
+      "right_hip_roll",
+      "right_hip_yaw",
+      "right_knee_pitch",
+      "right_ankle_pitch",
+      "left_hip_pitch",
+      "left_hip_roll",
+      "left_hip_yaw",
+      "left_knee_pitch",
+      "left_ankle_pitch"
+    ],
+    "qpos_adr": [
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22
+    ],
+    "qvel_adr": [
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21
+    ],
+    "default_pos": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.25,
+      0.0,
+      0.0,
+      0.5,
+      0.25,
+      0.25,
+      0.0,
+      0.0,
+      -0.5,
+      -0.25
+    ],
+    "kp": [
+      1.974,
+      1.974,
+      1.974,
+      1.974,
+      1.974,
+      1.974,
+      6.672,
+      6.672,
+      6.672,
+      6.672,
+      6.672,
+      6.672,
+      6.672,
+      6.672,
+      6.672,
+      6.672
+    ],
+    "kd": [
+      0.075,
+      0.075,
+      0.075,
+      0.075,
+      0.075,
+      0.075,
+      0.196,
+      0.196,
+      0.196,
+      0.196,
+      0.196,
+      0.196,
+      0.196,
+      0.196,
+      0.196,
+      0.196
+    ],
+    "effort_limit": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+    ]
+  },
+  "policy": {
+    "input": "obs",
+    "output": "actions",
+    "obs_dim": 62,
+    "action_dim": 16,
+    "observation_layout": [
+      {
+        "name": "base_lin_vel",
+        "offset": 0,
+        "size": 3,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "base_ang_vel",
+        "offset": 3,
+        "size": 3,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "projected_gravity",
+        "offset": 6,
+        "size": 3,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "joint_pos",
+        "offset": 9,
+        "size": 16,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "joint_vel",
+        "offset": 25,
+        "size": 16,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "actions",
+        "offset": 41,
+        "size": 16,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "command",
+        "offset": 57,
+        "size": 3,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      },
+      {
+        "name": "gait_clock",
+        "offset": 60,
+        "size": 2,
+        "scale": 1.0,
+        "history": 0,
+        "clip": [
+          -Infinity,
+          Infinity
+        ]
+      }
+    ],
+    "action_scale": [
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5
+    ],
+    "note": "ctrl[i] = default_pos[i] + action_scale[i] * action[i]; ctrl index == action index == joints.names index"
+  },
+  "command": {
+    "order": [
+      "lin_vel_x",
+      "lin_vel_y",
+      "ang_vel_z"
+    ],
+    "ranges": {
+      "lin_vel_x": [
+        -0.25,
+        0.8
+      ],
+      "lin_vel_y": [
+        -0.15,
+        0.15
+      ],
+      "ang_vel_z": [
+        -2.0,
+        2.0
+      ]
+    },
+    "presets": {
+      "walk": [
+        0.25,
+        0.0,
+        0.0
+      ],
+      "jog": [
+        0.525,
+        0.0,
+        0.0
+      ],
+      "sprint": [
+        0.8,
+        0.0,
+        0.0
+      ]
+    },
+    "suggested_walk": [
+      0.25,
+      0.0,
+      0.0
+    ]
+  },
+  "gait_clock": {
+    "note": "phi advances by control_dt / period each control step while speed = |cmd_xy| + 0.3*|cmd_wz| > standing_threshold, else holds. s = clamp((speed - walk_vel) / (run_vel - walk_vel), 0, 1); period = lerp(period_walk, period_run, s). Observation = [sin(2 pi phi), cos(2 pi phi)].",
+    "walk_vel": 0.25,
+    "run_vel": 0.8,
+    "period_walk": 0.5076031914793286,
+    "period_run": 0.32994207446156365,
+    "standing_threshold": 0.025,
+    "period_scale_range": [
+      0.9,
+      1.1
+    ],
+    "period_scale_note": "Training randomised the period by this factor per episode; the policy follows whatever clock it is given, so a runtime may vary the scale for gait variety."
+  }
+}

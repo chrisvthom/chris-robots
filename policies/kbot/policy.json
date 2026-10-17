@@ -1,7 +1,7 @@
 {
   "robot": "kbot",
   "display_name": "K-Bot V2",
-  "source_run": "2026-10-16_18-58-58_v13_flat_sym",
+  "source_run": "2026-10-16_21-46-14_v16_sway2",
   "files": {
     "scene": "scene.xml",
     "policy": "policy.onnx"
@@ -343,6 +343,11 @@
     "run_vel": 2.5,
     "period_walk": 0.9028305488850055,
     "period_run": 0.5868398567752535,
-    "standing_threshold": 0.08000000000000002
+    "standing_threshold": 0.08000000000000002,
+    "period_scale_range": [
+      0.9,
+      1.1
+    ],
+    "period_scale_note": "Training randomised the period by this factor per episode; the policy follows whatever clock it is given, so a runtime may vary the scale for gait variety."
   }
 }

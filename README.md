@@ -8,10 +8,10 @@ not sim-to-real: it's a lean, good-looking walk that can run in a browser
 | Robot | | DoF | Mass | Height | Policy |
 |---|---|---|---|---|---|
 | **K-Bot V2** (`kbot`) | <img src="media/kbot.png" width="120"> | 20 | 36 kg | 1.4 m | [`policies/kbot`](policies/kbot) |
-| **Z-Bot V3** (`zbot_v3`) | <img src="media/zbot_v3.png" width="120"> | 20 | 3.3 kg | 0.40 m | |
-| **Z-Bot V2** (`zbot_v2`) | <img src="media/zbot_v2.png" width="120"> | 18 | 3.8 kg | 0.48 m | |
-| **Opus** (`opus`) | <img src="media/opus.png" width="120"> | 16 | 2.8 kg | 0.32 m | |
-| **GPR / Stompy** (`gpr`) | <img src="media/gpr.png" width="120"> | 20 | 29 kg | 1.4 m | |
+| **Z-Bot V3** (`zbot_v3`) | <img src="media/zbot_v3.png" width="120"> | 20 | 3.3 kg | 0.40 m | [`policies/zbot_v3`](policies/zbot_v3) (early checkpoint) |
+| **Z-Bot V2** (`zbot_v2`) | <img src="media/zbot_v2.png" width="120"> | 18 | 3.8 kg | 0.48 m | training |
+| **Opus** (`opus`) | <img src="media/opus.png" width="120"> | 16 | 2.8 kg | 0.32 m | [`policies/opus`](policies/opus) (early checkpoint) |
+| **GPR / Stompy** (`gpr`) | <img src="media/gpr.png" width="120"> | 20 | 29 kg | 1.4 m | training |
 
 K-Bot V2 and GPR are full-size Robstride-actuated humanoids from my time at K-Scale;
 the Z-Bots are the 2-ft Feetech-servo robots; Opus is the 3D-printed plastic one.
